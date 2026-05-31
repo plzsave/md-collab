@@ -1,0 +1,1770 @@
+<!DOCTYPE html>
+<html lang="ja" class="h-full">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>md-collab</title>
+<!--TAILWIND_CSS--><!-- Tailwind is compiled at build time and inlined here (see scripts/inline-css.ts). -->
+<script src="https://cdn.jsdelivr.net/npm/marked@18.0.4/lib/marked.umd.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/dompurify@3.4.7/dist/purify.min.js"></script>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/styles/github.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/highlight.min.js"></script>
+<!-- mermaid v11 ships ESM only; load it as a module and expose it as a global. -->
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11.15.0/+esm";
+  mermaid.initialize({ startOnLoad: false, theme: 'neutral', securityLevel: 'strict' });
+  window.mermaid = mermaid;
+  window.dispatchEvent(new Event('mermaid-ready'));
+</script>
+<style>
+  /* Markdown rendering */
+  .md-body { font-size: 15px; line-height: 1.7; color: #24292e; }
+  .dark .md-body { color: #e6edf3; }
+  .md-body h1 { font-size: 2em; font-weight: 700; border-bottom: 1px solid #e1e4e8; padding-bottom: .3em; margin: 1.5em 0 1em; }
+  .md-body h2 { font-size: 1.5em; font-weight: 600; border-bottom: 1px solid #e1e4e8; padding-bottom: .3em; margin: 1.5em 0 .8em; }
+  .md-body h3 { font-size: 1.25em; font-weight: 600; margin: 1.2em 0 .6em; }
+  .md-body h4,h5,h6 { font-weight: 600; margin: 1em 0 .5em; }
+  .dark .md-body h1, .dark .md-body h2 { border-color: #30363d; }
+  .md-body p { margin: .8em 0; }
+  .md-body ul { list-style: disc; padding-left: 2em; margin: .5em 0; }
+  .md-body ol { list-style: decimal; padding-left: 2em; margin: .5em 0; }
+  .md-body li { margin: .25em 0; }
+  .md-body blockquote { border-left: 4px solid #d0d7de; padding: 0 1em; color: #57606a; margin: 1em 0; }
+  .dark .md-body blockquote { border-color: #30363d; color: #8b949e; }
+  .md-body code { background: #f6f8fa; border-radius: 4px; padding: .2em .4em; font-size: .85em; font-family: monospace; }
+  .dark .md-body code { background: #161b22; color: #e6edf3; }
+  .md-body pre { background: #f6f8fa; border-radius: 6px; padding: 1em; overflow: auto; margin: 1em 0; }
+  .dark .md-body pre { background: #161b22; }
+  .md-body pre code { background: none; padding: 0; }
+  .md-body table { border-collapse: collapse; width: 100%; margin: 1em 0; }
+  .md-body th, .md-body td { border: 1px solid #d0d7de; padding: .5em .75em; }
+  .dark .md-body th, .dark .md-body td { border-color: #30363d; }
+  .md-body th { background: #f6f8fa; font-weight: 600; }
+  .dark .md-body th { background: #161b22; }
+  .md-body tr:nth-child(even) td { background: #f6f8fa; }
+  .dark .md-body tr:nth-child(even) td { background: #161b22; }
+  .md-body a { color: #0969da; text-decoration: none; }
+  .dark .md-body a { color: #58a6ff; }
+  .md-body a:hover { text-decoration: underline; }
+  .md-body img { max-width: 100%; }
+  .md-body hr { border: none; border-top: 1px solid #d0d7de; margin: 1.5em 0; }
+  .dark .md-body hr { border-color: #30363d; }
+
+  /* Comment anchors */
+  .comment-anchor {
+    background: rgba(255, 210, 0, 0.35);
+    border-bottom: 2px solid rgba(255, 180, 0, 0.8);
+    cursor: pointer;
+    border-radius: 2px;
+  }
+  .comment-anchor:hover { background: rgba(255, 210, 0, 0.55); }
+  .comment-anchor.resolved {
+    background: rgba(40, 167, 69, 0.15);
+    border-bottom-color: rgba(40, 167, 69, 0.5);
+  }
+  .comment-anchor.active { background: rgba(255, 180, 0, 0.6); }
+
+  /* Selection tooltip */
+  #comment-tooltip {
+    position: fixed;
+    background: #1a1a2e;
+    color: white;
+    padding: 6px 12px;
+    border-radius: 6px;
+    font-size: 13px;
+    cursor: pointer;
+    z-index: 1000;
+    display: none;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+    user-select: none;
+  }
+  #comment-tooltip:hover { background: #16213e; }
+
+  /* Comment panel */
+  .thread-card {
+    transition: box-shadow 0.15s;
+  }
+  .thread-card:hover { box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+  .thread-card.active { box-shadow: 0 0 0 2px #f59e0b; }
+
+  /* Mermaid */
+  .mermaid { text-align: center; margin: 1em 0; }
+
+  /* Scrollbar */
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: #c1c1c1; border-radius: 3px; }
+  .dark ::-webkit-scrollbar-thumb { background: #444; }
+
+  /* Editor split pane */
+  #editor-pane { resize: none; }
+
+  /* Fade transition */
+  .fade-in { animation: fadeIn 0.15s ease-in; }
+  @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+</style>
+</head>
+<body class="h-full bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-gray-100">
+
+<!-- Header -->
+<header class="h-12 bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 flex items-center px-4 gap-3 flex-shrink-0 z-20 relative shadow-sm">
+  <span class="font-bold text-indigo-600 dark:text-indigo-400 text-lg tracking-tight select-none">md-collab</span>
+  <div class="flex-1 flex items-center gap-1 overflow-x-auto" id="folder-tabs"></div>
+  <div class="flex items-center gap-2 ml-auto">
+    <button id="notif-btn" class="relative p-1.5 rounded-md hover:bg-gray-100 dark:hover:bg-gray-700" title="通知">
+      <svg class="w-5 h-5 text-gray-600 dark:text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"/>
+      </svg>
+      <span id="notif-badge" class="absolute -top-0.5 -right-0.5 bg-red-500 text-white text-xs w-4 h-4 rounded-full hidden items-center justify-center text-[10px]"></span>
+    </button>
+    <button id="members-btn" class="p-1.5 rounded-md hover:bg-gray-100 dark:hover:bg-gray-700" title="メンバー管理">
+      <svg class="w-5 h-5 text-gray-600 dark:text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z"/>
+      </svg>
+    </button>
+    <button id="darkmode-btn" class="p-1.5 rounded-md hover:bg-gray-100 dark:hover:bg-gray-700">
+      <svg id="sun-icon" class="w-5 h-5 text-gray-600 dark:text-gray-300 hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364-6.364l-.707.707M6.343 17.657l-.707.707M17.657 17.657l-.707-.707M6.343 6.343l-.707-.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"/>
+      </svg>
+      <svg id="moon-icon" class="w-5 h-5 text-gray-600 dark:text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"/>
+      </svg>
+    </button>
+    <span id="user-badge" class="text-xs text-gray-500 dark:text-gray-400 hidden sm:block max-w-[160px] truncate"></span>
+  </div>
+</header>
+
+<div class="flex h-[calc(100vh-3rem)]">
+  <!-- Sidebar: Document list -->
+  <aside class="w-64 flex-shrink-0 bg-white dark:bg-gray-800 border-r border-gray-200 dark:border-gray-700 flex flex-col">
+    <div class="p-3 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
+      <span class="text-sm font-semibold text-gray-700 dark:text-gray-300" id="sidebar-folder-name">ドキュメント</span>
+      <div class="flex items-center gap-1">
+        <button id="status-settings-btn" class="p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-400 hover:text-indigo-600 dark:hover:text-indigo-400" title="ステータス設定">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/>
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
+          </svg>
+        </button>
+        <button id="new-doc-btn" class="p-1 rounded hover:bg-indigo-50 dark:hover:bg-indigo-900 text-indigo-600 dark:text-indigo-400" title="新規ドキュメント">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
+          </svg>
+        </button>
+      </div>
+    </div>
+    <div id="status-tabs" class="px-2 py-2 border-b border-gray-200 dark:border-gray-700 flex flex-wrap gap-1"></div>
+    <div class="flex-1 overflow-y-auto" id="doc-list"></div>
+  </aside>
+
+  <!-- Main content -->
+  <main class="flex-1 flex overflow-hidden">
+    <!-- Empty state -->
+    <div id="empty-state" class="flex-1 flex flex-col items-center justify-center text-gray-400 dark:text-gray-500">
+      <svg class="w-16 h-16 mb-4 opacity-40" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+      </svg>
+      <p class="text-lg font-medium">ドキュメントを選択してください</p>
+      <p class="text-sm mt-1">左のリストから選ぶか、新規作成してください</p>
+    </div>
+
+    <!-- View mode -->
+    <div id="view-panel" class="flex-1 flex overflow-hidden hidden">
+      <!-- Doc content area -->
+      <div class="flex-1 flex flex-col overflow-hidden">
+        <!-- Doc toolbar -->
+        <div class="h-10 border-b border-gray-200 dark:border-gray-700 flex items-center px-4 gap-2 flex-shrink-0 bg-white dark:bg-gray-800">
+          <h2 id="doc-title" class="text-sm font-semibold text-gray-800 dark:text-gray-200 flex-1 truncate"></h2>
+          <button id="edit-btn" class="text-xs px-3 py-1 rounded-md bg-indigo-600 hover:bg-indigo-700 text-white font-medium transition-colors">編集</button>
+          <button id="delete-doc-btn" class="text-xs px-2 py-1 rounded-md hover:bg-red-50 dark:hover:bg-red-900 text-red-500" title="削除">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
+            </svg>
+          </button>
+        </div>
+        <!-- Rendered content -->
+        <div id="doc-content" class="flex-1 overflow-y-auto p-6 md-body bg-white dark:bg-gray-900"></div>
+      </div>
+      <!-- Comment threads panel -->
+      <div id="comment-panel" class="w-80 flex-shrink-0 border-l border-gray-200 dark:border-gray-700 flex flex-col bg-white dark:bg-gray-800">
+        <div class="h-10 border-b border-gray-200 dark:border-gray-700 flex items-center px-3 justify-between flex-shrink-0">
+          <span class="text-sm font-semibold text-gray-700 dark:text-gray-300">コメント</span>
+          <div class="flex gap-1">
+            <button id="filter-open-btn" class="text-xs px-2 py-0.5 rounded-full bg-amber-100 dark:bg-amber-900 text-amber-700 dark:text-amber-300 font-medium border border-amber-300 dark:border-amber-700">未解決</button>
+            <button id="filter-all-btn" class="text-xs px-2 py-0.5 rounded-full hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400 font-medium">すべて</button>
+          </div>
+        </div>
+        <div id="thread-list" class="flex-1 overflow-y-auto p-2 space-y-2"></div>
+      </div>
+    </div>
+
+    <!-- Edit mode -->
+    <div id="edit-panel" class="flex-1 flex flex-col overflow-hidden hidden">
+      <div class="h-10 border-b border-gray-200 dark:border-gray-700 flex items-center px-4 gap-2 flex-shrink-0 bg-white dark:bg-gray-800">
+        <h2 id="edit-title" class="text-sm font-semibold text-gray-800 dark:text-gray-200 flex-1 truncate"></h2>
+        <button id="save-btn" class="text-xs px-3 py-1 rounded-md bg-indigo-600 hover:bg-indigo-700 text-white font-medium transition-colors">保存</button>
+        <button id="cancel-edit-btn" class="text-xs px-3 py-1 rounded-md hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-600 dark:text-gray-400 font-medium">キャンセル</button>
+      </div>
+      <div class="flex-1 flex overflow-hidden">
+        <div class="flex-1 flex flex-col overflow-hidden border-r border-gray-200 dark:border-gray-700">
+          <div class="px-3 py-1 text-xs text-gray-500 dark:text-gray-400 bg-gray-50 dark:bg-gray-900 border-b border-gray-200 dark:border-gray-700">Markdown</div>
+          <textarea id="editor-pane" class="flex-1 p-4 font-mono text-sm bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 resize-none focus:outline-none leading-relaxed" spellcheck="false"></textarea>
+        </div>
+        <div class="flex-1 flex flex-col overflow-hidden">
+          <div class="px-3 py-1 text-xs text-gray-500 dark:text-gray-400 bg-gray-50 dark:bg-gray-900 border-b border-gray-200 dark:border-gray-700">プレビュー</div>
+          <div id="preview-pane" class="flex-1 overflow-y-auto p-4 md-body bg-white dark:bg-gray-900"></div>
+        </div>
+      </div>
+    </div>
+  </main>
+</div>
+
+<!-- Selection tooltip (add comment) -->
+<div id="comment-tooltip">💬 コメントを追加</div>
+
+<!-- ─── Modals ─────────────────────────────────────────────────── -->
+
+<!-- New comment modal -->
+<div id="comment-modal" class="fixed inset-0 bg-black/40 z-50 hidden items-center justify-center">
+  <div class="bg-white dark:bg-gray-800 rounded-xl shadow-xl w-full max-w-lg mx-4 fade-in">
+    <div class="p-4 border-b border-gray-200 dark:border-gray-700">
+      <p class="text-sm font-semibold text-gray-700 dark:text-gray-300">コメントを追加</p>
+      <p class="text-xs text-gray-500 dark:text-gray-400 mt-1 italic truncate" id="anchor-preview"></p>
+    </div>
+    <div class="p-4">
+      <textarea id="comment-input" rows="3" class="w-full border border-gray-300 dark:border-gray-600 rounded-lg p-2 text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 resize-none focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="コメントを入力… @でメンション"></textarea>
+      <div id="mention-dropdown" class="hidden mt-1 border border-gray-200 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 shadow-lg max-h-40 overflow-y-auto"></div>
+    </div>
+    <div class="p-3 border-t border-gray-200 dark:border-gray-700 flex justify-end gap-2">
+      <button id="comment-cancel-btn" class="text-sm px-4 py-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-600 dark:text-gray-300">キャンセル</button>
+      <button id="comment-submit-btn" class="text-sm px-4 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-medium">送信</button>
+    </div>
+  </div>
+</div>
+
+<!-- Reply modal -->
+<div id="reply-modal" class="fixed inset-0 bg-black/40 z-50 hidden items-center justify-center">
+  <div class="bg-white dark:bg-gray-800 rounded-xl shadow-xl w-full max-w-lg mx-4 fade-in">
+    <div class="p-4 border-b border-gray-200 dark:border-gray-700">
+      <p class="text-sm font-semibold text-gray-700 dark:text-gray-300">返信</p>
+    </div>
+    <div class="p-4">
+      <textarea id="reply-input" rows="3" class="w-full border border-gray-300 dark:border-gray-600 rounded-lg p-2 text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 resize-none focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="返信を入力… @でメンション"></textarea>
+      <div id="reply-mention-dropdown" class="hidden mt-1 border border-gray-200 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 shadow-lg max-h-40 overflow-y-auto"></div>
+    </div>
+    <div class="p-3 border-t border-gray-200 dark:border-gray-700 flex justify-end gap-2">
+      <button id="reply-cancel-btn" class="text-sm px-4 py-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-600 dark:text-gray-300">キャンセル</button>
+      <button id="reply-submit-btn" class="text-sm px-4 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-medium">送信</button>
+    </div>
+  </div>
+</div>
+
+<!-- New document modal -->
+<div id="new-doc-modal" class="fixed inset-0 bg-black/40 z-50 hidden items-center justify-center">
+  <div class="bg-white dark:bg-gray-800 rounded-xl shadow-xl w-full max-w-sm mx-4 fade-in">
+    <div class="p-4 border-b border-gray-200 dark:border-gray-700">
+      <p class="text-sm font-semibold text-gray-700 dark:text-gray-300">新規ドキュメント</p>
+    </div>
+    <div class="p-4">
+      <input id="new-doc-title" type="text" class="w-full border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-2 text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="タイトル">
+    </div>
+    <div class="p-3 border-t border-gray-200 dark:border-gray-700 flex justify-end gap-2">
+      <button id="new-doc-cancel" class="text-sm px-4 py-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-600 dark:text-gray-300">キャンセル</button>
+      <button id="new-doc-submit" class="text-sm px-4 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-medium">作成</button>
+    </div>
+  </div>
+</div>
+
+<!-- New folder modal -->
+<div id="new-folder-modal" class="fixed inset-0 bg-black/40 z-50 hidden items-center justify-center">
+  <div class="bg-white dark:bg-gray-800 rounded-xl shadow-xl w-full max-w-sm mx-4 fade-in">
+    <div class="p-4 border-b border-gray-200 dark:border-gray-700">
+      <p class="text-sm font-semibold text-gray-700 dark:text-gray-300">新規フォルダ</p>
+    </div>
+    <div class="p-4">
+      <input id="new-folder-name" type="text" class="w-full border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-2 text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="フォルダ名">
+    </div>
+    <div class="p-3 border-t border-gray-200 dark:border-gray-700 flex justify-end gap-2">
+      <button id="new-folder-cancel" class="text-sm px-4 py-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-600 dark:text-gray-300">キャンセル</button>
+      <button id="new-folder-submit" class="text-sm px-4 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-medium">作成</button>
+    </div>
+  </div>
+</div>
+
+<!-- Members modal -->
+<div id="members-modal" class="fixed inset-0 bg-black/40 z-50 hidden items-center justify-center">
+  <div class="bg-white dark:bg-gray-800 rounded-xl shadow-xl w-full max-w-md mx-4 fade-in">
+    <div class="p-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
+      <p class="text-sm font-semibold text-gray-700 dark:text-gray-300">メンバー管理</p>
+      <button id="members-close-btn" class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200">✕</button>
+    </div>
+    <div class="p-4 space-y-4">
+      <!-- Add member form -->
+      <div class="space-y-2">
+        <div class="flex gap-2">
+          <input id="member-email-input" type="email" placeholder="メールアドレス" class="flex-1 min-w-0 border border-gray-300 dark:border-gray-600 rounded-lg px-2 py-1.5 text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-1 focus:ring-indigo-500">
+          <input id="member-name-input" type="text" placeholder="表示名" class="flex-1 min-w-0 border border-gray-300 dark:border-gray-600 rounded-lg px-2 py-1.5 text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-1 focus:ring-indigo-500">
+        </div>
+        <button id="add-member-btn" class="w-full text-sm px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-medium disabled:opacity-60 disabled:cursor-not-allowed">追加</button>
+      </div>
+      <!-- Member list -->
+      <div id="member-list" class="space-y-1 max-h-60 overflow-y-auto"></div>
+    </div>
+  </div>
+</div>
+
+<!-- Status settings modal -->
+<div id="status-settings-modal" class="fixed inset-0 bg-black/40 z-50 hidden items-center justify-center">
+  <div class="bg-white dark:bg-gray-800 rounded-xl shadow-xl w-full max-w-md mx-4 fade-in">
+    <div class="p-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
+      <p class="text-sm font-semibold text-gray-700 dark:text-gray-300">ステータス管理</p>
+      <button id="status-settings-close" class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200">✕</button>
+    </div>
+    <div class="p-4 space-y-3">
+      <div id="status-edit-list" class="space-y-2 max-h-72 overflow-y-auto"></div>
+      <button id="status-add-btn" class="w-full text-sm px-3 py-1.5 rounded-lg border border-dashed border-gray-300 dark:border-gray-600 text-gray-500 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700">＋ ステータスを追加</button>
+      <p class="text-xs text-gray-400 dark:text-gray-500">削除したステータスのドキュメントは、先頭のステータスとして表示されます。アーカイブはステータスとは別に管理されます。</p>
+    </div>
+    <div class="p-3 border-t border-gray-200 dark:border-gray-700 flex justify-end gap-2">
+      <button id="status-settings-cancel" class="text-sm px-4 py-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-600 dark:text-gray-300">キャンセル</button>
+      <button id="status-save-btn" class="text-sm px-4 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-medium">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- Notifications panel -->
+<div id="notif-panel" class="fixed top-12 right-0 w-80 bg-white dark:bg-gray-800 border-l border-b border-gray-200 dark:border-gray-700 shadow-xl z-40 hidden flex-col max-h-[calc(100vh-3rem)]">
+  <div class="p-3 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between flex-shrink-0">
+    <span class="text-sm font-semibold text-gray-700 dark:text-gray-300">通知</span>
+    <button id="mark-all-read-btn" class="text-xs text-indigo-600 dark:text-indigo-400 hover:underline">すべて既読</button>
+  </div>
+  <div id="notif-list" class="flex-1 overflow-y-auto"></div>
+</div>
+
+<!-- Toast notification -->
+<div id="toast" class="fixed bottom-4 right-4 bg-gray-800 dark:bg-gray-700 text-white text-sm px-4 py-2.5 rounded-lg shadow-lg z-50 hidden fade-in"></div>
+
+<!-- Access denied overlay (non-members) -->
+<div id="access-denied" class="fixed inset-0 bg-gray-50 dark:bg-gray-900 z-50 hidden flex-col items-center justify-center text-center px-6">
+  <svg class="w-14 h-14 mb-4 text-gray-300 dark:text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/>
+  </svg>
+  <p class="text-lg font-medium text-gray-700 dark:text-gray-200">アクセス権がありません</p>
+  <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">このワークスペースのメンバーではありません。<br>管理者に <span id="access-denied-email" class="font-medium"></span> の追加を依頼してください。</p>
+</div>
+
+<!-- Loading overlay -->
+<div id="loading" class="fixed inset-0 bg-white/80 dark:bg-gray-900/80 z-50 hidden items-center justify-center">
+  <div class="flex flex-col items-center gap-3">
+    <div class="w-8 h-8 border-4 border-indigo-200 border-t-indigo-600 rounded-full animate-spin"></div>
+    <span class="text-sm text-gray-600 dark:text-gray-400" id="loading-msg">読み込み中…</span>
+  </div>
+</div>
+
+<script>
+// ─── State ────────────────────────────────────────────────────────────────────
+const state = {
+  currentUser: '',
+  currentUserName: '',
+  folders: [],
+  statuses: [],
+  docs: [],              // cached document list for the current folder
+  docFilter: 'all',      // 'all' | <statusId> | '__archived__'
+  currentFolderId: null,
+  currentDocId: null,
+  currentDocName: '',
+  currentDocContent: '',
+  currentDocLastUpdated: 0,
+  threads: [],
+  members: [],
+  unreadCount: 0,
+  filterMode: 'open',   // 'open' | 'all'
+  pendingAnchor: null,  // { selectedText, contextBefore, contextAfter }
+  pendingReplyThreadId: null,
+  activeMentionInput: null,
+};
+
+// ─── Init ─────────────────────────────────────────────────────────────────────
+// mermaid is loaded and initialized by the module script in <head>; it may not
+// be present yet when an early render runs, so renderMermaidBlocks awaits it.
+function ensureMermaid() {
+  if (window.mermaid) return Promise.resolve(window.mermaid);
+  return new Promise(resolve => {
+    window.addEventListener('mermaid-ready', () => resolve(window.mermaid), { once: true });
+  });
+}
+
+(function init() {
+  loadDarkMode();
+  showLoading('初期化中…');
+  google.script.run
+    .withSuccessHandler(onAppState)
+    .withFailureHandler(onError)
+    .getAppState();
+})();
+
+function onAppState(data) {
+  state.currentUser = data.currentUser;
+  state.currentUserName = data.currentUserName;
+  state.folders = data.folders || [];
+  state.statuses = data.statuses || [];
+  state.unreadCount = data.unreadCount || 0;
+  hideLoading();
+  if (!data.isMember) {
+    document.getElementById('access-denied-email').textContent = data.currentUser || '';
+    const ad = document.getElementById('access-denied');
+    ad.classList.remove('hidden');
+    ad.classList.add('flex');
+    return;
+  }
+  document.getElementById('user-badge').textContent = data.currentUserName || data.currentUser;
+  document.getElementById('user-badge').classList.remove('hidden');
+  renderFolderTabs();
+  updateNotifBadge();
+  loadMembers();
+  if (state.folders.length > 0) selectFolder(state.folders[0].id);
+}
+
+// ─── Dark mode ────────────────────────────────────────────────────────────────
+function loadDarkMode() {
+  const isDark = localStorage.getItem('md-collab-dark') === 'true';
+  document.documentElement.classList.toggle('dark', isDark);
+  document.getElementById('sun-icon').classList.toggle('hidden', !isDark);
+  document.getElementById('moon-icon').classList.toggle('hidden', isDark);
+}
+
+document.getElementById('darkmode-btn').addEventListener('click', () => {
+  const isDark = document.documentElement.classList.toggle('dark');
+  localStorage.setItem('md-collab-dark', String(isDark));
+  document.getElementById('sun-icon').classList.toggle('hidden', !isDark);
+  document.getElementById('moon-icon').classList.toggle('hidden', isDark);
+  if (document.getElementById('view-panel').classList.contains('hidden') === false) {
+    renderMermaidBlocks();
+  }
+  renderDocList(); // recompute status badge colors for the new theme
+});
+
+// ─── Folder tabs ─────────────────────────────────────────────────────────────
+function renderFolderTabs() {
+  const container = document.getElementById('folder-tabs');
+  container.innerHTML = '';
+  for (const folder of state.folders) {
+    const btn = document.createElement('button');
+    btn.dataset.id = folder.id;
+    btn.className = 'text-sm px-3 py-1.5 rounded-md whitespace-nowrap transition-colors ' +
+      (folder.id === state.currentFolderId
+        ? 'bg-indigo-600 text-white font-medium'
+        : 'text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700');
+    btn.textContent = folder.name;
+    btn.addEventListener('click', () => selectFolder(folder.id));
+    container.appendChild(btn);
+    // Rename/delete menu, shown only for the active folder.
+    if (folder.id === state.currentFolderId) {
+      const menuBtn = document.createElement('button');
+      menuBtn.className = 'px-1 rounded text-gray-400 hover:text-indigo-600 dark:hover:text-indigo-400';
+      menuBtn.title = 'フォルダ設定';
+      menuBtn.textContent = '⋯';
+      menuBtn.addEventListener('click', (e) => { e.stopPropagation(); openFolderMenu(folder, menuBtn); });
+      container.appendChild(menuBtn);
+    }
+  }
+  // Add folder button
+  const addBtn = document.createElement('button');
+  addBtn.className = 'text-sm px-2 py-1.5 rounded-md text-gray-400 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-gray-100 dark:hover:bg-gray-700';
+  addBtn.title = '新規フォルダ';
+  addBtn.innerHTML = '<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>';
+  addBtn.addEventListener('click', () => showModal('new-folder-modal'));
+  container.appendChild(addBtn);
+}
+
+function selectFolder(folderId) {
+  state.currentFolderId = folderId;
+  const folder = state.folders.find(f => f.id === folderId);
+  document.getElementById('sidebar-folder-name').textContent = folder ? folder.name : 'ドキュメント';
+  renderFolderTabs();
+  loadDocList(folderId);
+}
+
+// ─── Folder rename / delete menu ───────────────────────────────────────────────
+function closeFolderMenu() {
+  const m = document.getElementById('folder-menu');
+  if (m) m.remove();
+  document.removeEventListener('click', closeFolderMenuOnOutside);
+}
+function closeFolderMenuOnOutside(e) {
+  if (!e.target.closest('#folder-menu')) closeFolderMenu();
+}
+function openFolderMenu(folder, anchorEl) {
+  closeFolderMenu();
+  const menu = document.createElement('div');
+  menu.id = 'folder-menu';
+  menu.className = 'fixed z-50 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg text-sm overflow-hidden min-w-[120px]';
+  const r = anchorEl.getBoundingClientRect();
+  menu.style.top = (r.bottom + 4) + 'px';
+  menu.style.left = r.left + 'px';
+  const rename = document.createElement('button');
+  rename.className = 'block w-full text-left px-4 py-2 hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-200';
+  rename.textContent = 'リネーム';
+  rename.addEventListener('click', () => { closeFolderMenu(); onRenameFolder(folder); });
+  const del = document.createElement('button');
+  del.className = 'block w-full text-left px-4 py-2 hover:bg-red-50 dark:hover:bg-red-900/30 text-red-600 dark:text-red-400';
+  del.textContent = '削除';
+  del.addEventListener('click', () => { closeFolderMenu(); onDeleteFolder(folder); });
+  menu.appendChild(rename);
+  menu.appendChild(del);
+  document.body.appendChild(menu);
+  setTimeout(() => document.addEventListener('click', closeFolderMenuOnOutside), 0);
+}
+
+function onRenameFolder(folder) {
+  const newName = prompt('フォルダ名を変更', folder.name);
+  if (!newName || !newName.trim() || newName === folder.name) return;
+  showLoading('変更中…');
+  google.script.run
+    .withSuccessHandler(() => {
+      hideLoading();
+      folder.name = newName.trim();
+      if (state.currentFolderId === folder.id) {
+        document.getElementById('sidebar-folder-name').textContent = folder.name;
+      }
+      renderFolderTabs();
+      showToast('フォルダ名を変更しました');
+    })
+    .withFailureHandler(e => { hideLoading(); onError(e); })
+    .renameFolder(folder.id, newName.trim());
+}
+
+function onDeleteFolder(folder) {
+  if (!confirm(`フォルダ "${folder.name}" を削除しますか？\n（フォルダ内にドキュメントがある場合は削除できません）`)) return;
+  showLoading('削除中…');
+  google.script.run
+    .withSuccessHandler(() => {
+      hideLoading();
+      state.folders = state.folders.filter(f => f.id !== folder.id);
+      if (state.currentFolderId === folder.id) {
+        state.currentFolderId = null;
+        state.currentDocId = null;
+        document.getElementById('view-panel').classList.add('hidden');
+        document.getElementById('edit-panel').classList.add('hidden');
+        document.getElementById('empty-state').classList.remove('hidden');
+        document.getElementById('doc-list').innerHTML = '';
+      }
+      renderFolderTabs();
+      if (state.folders.length > 0 && !state.currentFolderId) selectFolder(state.folders[0].id);
+      showToast('フォルダを削除しました');
+    })
+    .withFailureHandler(e => { hideLoading(); onError(e); })
+    .deleteFolder(folder.id);
+}
+
+// ─── Document list ────────────────────────────────────────────────────────────
+function loadDocList(folderId) {
+  const list = document.getElementById('doc-list');
+  list.innerHTML = '<div class="p-3 text-xs text-gray-400">読み込み中…</div>';
+  google.script.run
+    .withSuccessHandler(docs => renderDocList(docs))
+    .withFailureHandler(onError)
+    .getDocumentList(folderId);
+}
+
+// Renders the doc list. When called with `docs` (from a fetch) it refreshes the
+// cache and the status tabs; when called with no argument it re-renders from the
+// cache (used after a local status/archive change or a tab switch).
+function renderDocList(docs) {
+  const list = document.getElementById('doc-list');
+  if (docs) {
+    state.docs = docs;
+    renderStatusTabs();
+  }
+  const all = state.docs || [];
+  const filter = state.docFilter || 'all';
+  let visible;
+  if (filter === '__archived__') visible = all.filter(d => d.archived);
+  else if (filter === '__mine__') visible = all.filter(d => !d.archived && d.assignee === state.currentUser);
+  else if (filter === 'all') visible = all.filter(d => !d.archived);
+  else visible = all.filter(d => !d.archived && d.statusId === filter);
+
+  if (visible.length === 0) {
+    let msg;
+    if (filter === '__archived__') msg = 'アーカイブされたドキュメントはありません';
+    else if (filter === '__mine__') msg = '自分が担当のドキュメントはありません';
+    else msg = 'ドキュメントがありません<br>右上の＋から作成できます';
+    list.innerHTML = `<div class="p-4 text-xs text-gray-400 dark:text-gray-500 text-center">${msg}</div>`;
+    return;
+  }
+  list.innerHTML = '';
+  for (const doc of visible) list.appendChild(buildDocItem(doc));
+}
+
+// Stable hue per status id so each status gets a distinct, consistent color
+// without the user having to pick one.
+function statusHue(id) {
+  let h = 0;
+  for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) % 360;
+  return h;
+}
+
+function statusBadgeHtml(status) {
+  if (!status) return '';
+  const h = statusHue(status.id);
+  const isDark = document.documentElement.classList.contains('dark');
+  const bg = isDark ? `hsl(${h} 40% 22%)` : `hsl(${h} 85% 92%)`;
+  const fg = isDark ? `hsl(${h} 70% 80%)` : `hsl(${h} 50% 32%)`;
+  return `<span class="inline-block text-xs px-1.5 py-0.5 rounded-full font-medium" style="background:${bg};color:${fg}">${escapeHtml(status.label)}</span>`;
+}
+
+function assigneeChipHtml(email) {
+  if (!email) return '';
+  const member = state.members.find(m => m.email === email);
+  const name = member ? member.displayName : email;
+  return `<span class="inline-flex items-center gap-1 min-w-0 text-xs text-gray-500 dark:text-gray-400" title="担当: ${escapeHtml(name)}">
+    <span class="w-4 h-4 rounded-full bg-indigo-100 dark:bg-indigo-900 text-indigo-600 dark:text-indigo-400 text-[10px] flex items-center justify-center font-bold flex-shrink-0">${escapeHtml(getInitial(name))}</span>
+    <span class="truncate">${escapeHtml(name)}</span>
+  </span>`;
+}
+
+function buildDocItem(doc) {
+  const item = document.createElement('div');
+  item.dataset.id = doc.id;
+  item.className = 'px-3 py-2.5 cursor-pointer border-b border-gray-100 dark:border-gray-700 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 transition-colors ' +
+    (doc.id === state.currentDocId ? 'bg-indigo-50 dark:bg-indigo-900/30 border-l-2 border-l-indigo-500' : '');
+  const status = state.statuses.find(s => s.id === doc.statusId);
+  item.innerHTML = `
+    <div class="flex items-start justify-between gap-1">
+      <span class="text-sm font-medium text-gray-800 dark:text-gray-200 truncate ${doc.archived ? 'opacity-60' : ''}">${escapeHtml(doc.name)}</span>
+      ${doc.openThreadCount > 0 ? `<span class="flex-shrink-0 text-xs bg-amber-100 dark:bg-amber-900 text-amber-700 dark:text-amber-300 px-1.5 py-0.5 rounded-full font-medium">${doc.openThreadCount}</span>` : ''}
+    </div>
+    <div class="flex items-center gap-1 mt-1">
+      <span class="flex items-center gap-1 min-w-0">${statusBadgeHtml(status)}${assigneeChipHtml(doc.assignee)}</span>
+      <span class="text-xs text-gray-400 dark:text-gray-500 flex-shrink-0 ml-auto">${formatDate(doc.lastUpdated)}</span>
+    </div>`;
+  item.addEventListener('click', () => openDocument(doc.id, doc.name));
+
+  // Inline controls — their clicks must not bubble up and open the document.
+  const controls = document.createElement('div');
+  controls.className = 'flex items-center gap-1 mt-1.5';
+  controls.addEventListener('click', e => e.stopPropagation());
+
+  const sel = document.createElement('select');
+  sel.className = 'flex-1 min-w-0 text-xs rounded border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-200 px-1 py-0.5 focus:outline-none focus:ring-1 focus:ring-indigo-500';
+  for (const s of state.statuses) {
+    const opt = document.createElement('option');
+    opt.value = s.id;
+    opt.textContent = s.label;
+    if (s.id === doc.statusId) opt.selected = true;
+    sel.appendChild(opt);
+  }
+  sel.addEventListener('change', () => onChangeDocStatus(doc, sel.value));
+
+  const arch = document.createElement('button');
+  arch.className = 'flex-shrink-0 text-xs px-1.5 py-0.5 rounded border border-gray-200 dark:border-gray-600 text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700';
+  arch.textContent = doc.archived ? '戻す' : 'アーカイブ';
+  arch.title = doc.archived ? 'アーカイブを解除' : 'アーカイブする';
+  arch.addEventListener('click', () => onToggleArchive(doc));
+
+  controls.appendChild(sel);
+  controls.appendChild(arch);
+  item.appendChild(controls);
+
+  // Assignee selector on its own row (👤 + select).
+  const assignRow = document.createElement('div');
+  assignRow.className = 'flex items-center gap-1 mt-1';
+  assignRow.addEventListener('click', e => e.stopPropagation());
+  const icon = document.createElement('span');
+  icon.className = 'text-xs flex-shrink-0';
+  icon.textContent = '👤';
+  const asel = document.createElement('select');
+  asel.className = 'flex-1 min-w-0 text-xs rounded border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-200 px-1 py-0.5 focus:outline-none focus:ring-1 focus:ring-indigo-500';
+  const none = document.createElement('option');
+  none.value = '';
+  none.textContent = '未割り当て';
+  if (!doc.assignee) none.selected = true;
+  asel.appendChild(none);
+  for (const m of state.members) {
+    const opt = document.createElement('option');
+    opt.value = m.email;
+    opt.textContent = m.displayName;
+    if (m.email === doc.assignee) opt.selected = true;
+    asel.appendChild(opt);
+  }
+  // Keep showing an assignee that is no longer a member.
+  if (doc.assignee && !state.members.some(m => m.email === doc.assignee)) {
+    const opt = document.createElement('option');
+    opt.value = doc.assignee;
+    opt.textContent = doc.assignee + '（元メンバー）';
+    opt.selected = true;
+    asel.appendChild(opt);
+  }
+  asel.addEventListener('change', () => onChangeDocAssignee(doc, asel.value));
+  assignRow.appendChild(icon);
+  assignRow.appendChild(asel);
+  item.appendChild(assignRow);
+
+  return item;
+}
+
+// ─── Status tabs (sidebar filter) ───────────────────────────────────────────────
+function renderStatusTabs() {
+  const container = document.getElementById('status-tabs');
+  if (!container) return;
+  container.innerHTML = '';
+  const all = state.docs || [];
+  const activeCount = all.filter(d => !d.archived).length;
+  const archivedCount = all.filter(d => d.archived).length;
+
+  container.appendChild(buildTabButton('all', 'すべて', activeCount));
+  const mineCount = all.filter(d => !d.archived && d.assignee === state.currentUser).length;
+  container.appendChild(buildTabButton('__mine__', '👤 自分の担当', mineCount));
+  for (const s of state.statuses) {
+    const count = all.filter(d => !d.archived && d.statusId === s.id).length;
+    container.appendChild(buildTabButton(s.id, s.label, count));
+  }
+  const archTab = buildTabButton('__archived__', '🗄 アーカイブ', archivedCount);
+  archTab.classList.add('ml-auto');
+  container.appendChild(archTab);
+}
+
+function buildTabButton(key, label, count) {
+  const btn = document.createElement('button');
+  const active = (state.docFilter || 'all') === key;
+  btn.className = 'text-xs px-2 py-0.5 rounded-full whitespace-nowrap border transition-colors ' +
+    (active
+      ? 'bg-indigo-600 border-indigo-600 text-white font-medium'
+      : 'border-gray-200 dark:border-gray-600 text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700');
+  btn.textContent = count > 0 ? `${label} ${count}` : label;
+  btn.addEventListener('click', () => {
+    state.docFilter = key;
+    renderStatusTabs();
+    renderDocList();
+  });
+  return btn;
+}
+
+function onChangeDocStatus(doc, statusId) {
+  const prev = doc.statusId;
+  if (prev === statusId) return;
+  doc.statusId = statusId;
+  google.script.run
+    .withSuccessHandler(() => { renderStatusTabs(); renderDocList(); showToast('ステータスを変更しました'); })
+    .withFailureHandler(e => { doc.statusId = prev; renderStatusTabs(); renderDocList(); onError(e); })
+    .setDocumentStatus(doc.id, statusId);
+}
+
+function onToggleArchive(doc) {
+  const next = !doc.archived;
+  google.script.run
+    .withSuccessHandler(() => {
+      doc.archived = next;
+      renderStatusTabs();
+      renderDocList();
+      showToast(next ? 'アーカイブしました' : 'アーカイブを解除しました');
+    })
+    .withFailureHandler(onError)
+    .setDocumentArchived(doc.id, next);
+}
+
+function onChangeDocAssignee(doc, email) {
+  const prev = doc.assignee;
+  if (prev === email) return;
+  doc.assignee = email;
+  google.script.run
+    .withSuccessHandler(() => { renderStatusTabs(); renderDocList(); showToast('担当者を変更しました'); })
+    .withFailureHandler(e => { doc.assignee = prev; renderStatusTabs(); renderDocList(); onError(e); })
+    .setDocumentAssignee(doc.id, email);
+}
+
+// ─── Status settings (customize the list) ───────────────────────────────────────
+let statusDraft = [];
+
+function openStatusSettings() {
+  statusDraft = state.statuses.map(s => ({ id: s.id, label: s.label }));
+  renderStatusDraft();
+  showModal('status-settings-modal');
+}
+
+function renderStatusDraft() {
+  const list = document.getElementById('status-edit-list');
+  list.innerHTML = '';
+  statusDraft.forEach((s, i) => {
+    const row = document.createElement('div');
+    row.className = 'flex items-center gap-2';
+    const sw = document.createElement('span');
+    sw.className = 'w-3 h-3 rounded-full flex-shrink-0';
+    sw.style.background = `hsl(${statusHue(s.id)} 60% 55%)`;
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.value = s.label;
+    input.className = 'flex-1 border border-gray-300 dark:border-gray-600 rounded-lg px-2 py-1.5 text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-1 focus:ring-indigo-500';
+    input.addEventListener('input', () => { statusDraft[i].label = input.value; });
+    const del = document.createElement('button');
+    del.className = 'text-gray-400 hover:text-red-500 px-1 flex-shrink-0';
+    del.textContent = '✕';
+    del.title = '削除';
+    del.addEventListener('click', () => {
+      if (statusDraft.length <= 1) { showToast('ステータスは1つ以上必要です'); return; }
+      statusDraft.splice(i, 1);
+      renderStatusDraft();
+    });
+    row.appendChild(sw);
+    row.appendChild(input);
+    row.appendChild(del);
+    list.appendChild(row);
+  });
+}
+
+function addStatusDraft() {
+  statusDraft.push({ id: 'st-' + Math.random().toString(36).slice(2, 9), label: '新しいステータス' });
+  renderStatusDraft();
+}
+
+function saveStatusSettings() {
+  const clean = statusDraft
+    .map(s => ({ id: s.id, label: (s.label || '').trim() }))
+    .filter(s => s.label);
+  if (clean.length === 0) { showToast('ステータスは1つ以上必要です'); return; }
+  showLoading('保存中…');
+  google.script.run
+    .withSuccessHandler(saved => {
+      hideLoading();
+      state.statuses = saved || clean;
+      // If the current filter pointed at a status that was removed, reset it.
+      if (state.docFilter !== 'all' && state.docFilter !== '__archived__' &&
+          !state.statuses.some(s => s.id === state.docFilter)) {
+        state.docFilter = 'all';
+      }
+      hideModal('status-settings-modal');
+      if (state.currentFolderId) loadDocList(state.currentFolderId);
+      showToast('ステータスを更新しました');
+    })
+    .withFailureHandler(e => { hideLoading(); onError(e); })
+    .saveStatuses(clean);
+}
+
+document.getElementById('status-settings-btn').addEventListener('click', openStatusSettings);
+document.getElementById('status-settings-close').addEventListener('click', () => hideModal('status-settings-modal'));
+document.getElementById('status-settings-cancel').addEventListener('click', () => hideModal('status-settings-modal'));
+document.getElementById('status-add-btn').addEventListener('click', addStatusDraft);
+document.getElementById('status-save-btn').addEventListener('click', saveStatusSettings);
+
+// ─── Document view ────────────────────────────────────────────────────────────
+function openDocument(docId, docName) {
+  state.currentDocId = docId;
+  state.currentDocName = docName;
+  showLoading('読み込み中…');
+  switchToViewMode();
+  // Update sidebar selection
+  document.querySelectorAll('#doc-list [data-id]').forEach(el => {
+    const active = el.dataset.id === docId;
+    el.classList.toggle('bg-indigo-50', active);
+    el.classList.toggle('dark:bg-indigo-900/30', active);
+    el.classList.toggle('border-l-2', active);
+    el.classList.toggle('border-l-indigo-500', active);
+  });
+
+  // Load content and threads in parallel
+  let content = null, threads = null;
+  function tryRender() {
+    if (content !== null && threads !== null) {
+      hideLoading();
+      state.currentDocContent = content;
+      state.threads = threads;
+      renderDocument(content, threads);
+    }
+  }
+  google.script.run
+    .withSuccessHandler(c => { content = c.content; state.currentDocLastUpdated = c.lastUpdated || 0; tryRender(); })
+    .withFailureHandler(onError)
+    .getDocument(docId);
+  google.script.run
+    .withSuccessHandler(t => { threads = t; tryRender(); })
+    .withFailureHandler(onError)
+    .getThreadsForDocument(docId);
+}
+
+function renderDocument(content, threads) {
+  document.getElementById('doc-title').textContent = state.currentDocName;
+  document.getElementById('empty-state').classList.add('hidden');
+  document.getElementById('view-panel').classList.remove('hidden');
+  document.getElementById('edit-panel').classList.add('hidden');
+
+  const container = document.getElementById('doc-content');
+  container.innerHTML = renderMarkdown(content);
+  enhanceContent(container);
+  hljs.highlightAll();
+
+  applyCommentAnchors(container, threads);
+  renderMermaidBlocks();
+  renderThreadList(threads);
+}
+
+// ─── Markdown rendering ───────────────────────────────────────────────────────
+// marked does NOT sanitize HTML, so its output is always run through DOMPurify
+// before it reaches innerHTML. Mermaid blocks and link attributes are applied as
+// a DOM post-process (enhanceContent) so we don't depend on marked's renderer
+// method signatures, which change between major versions.
+function renderMarkdown(content) {
+  marked.setOptions({ breaks: true, gfm: true });
+  const raw = marked.parse(content || '');
+  return DOMPurify.sanitize(raw, { ADD_ATTR: ['target'] });
+}
+
+// Run after sanitized HTML is inserted into the DOM.
+function enhanceContent(container) {
+  // Open links in a new tab safely.
+  container.querySelectorAll('a[href]').forEach(a => {
+    a.setAttribute('target', '_blank');
+    a.setAttribute('rel', 'noopener noreferrer');
+  });
+  // Convert ```mermaid fenced blocks into mermaid containers.
+  container.querySelectorAll('pre > code.language-mermaid').forEach(code => {
+    const div = document.createElement('div');
+    div.className = 'mermaid';
+    div.textContent = code.textContent;
+    code.parentElement.replaceWith(div);
+  });
+}
+
+async function renderMermaidBlocks() {
+  const els = document.querySelectorAll('#doc-content .mermaid, #preview-pane .mermaid');
+  if (els.length === 0) return;
+  const mermaid = await ensureMermaid();
+  for (const el of els) {
+    if (el.dataset.processed) continue;
+    el.dataset.processed = '1';
+    try {
+      const id = 'mermaid-' + Math.random().toString(36).slice(2);
+      const { svg } = await mermaid.render(id, el.textContent);
+      el.innerHTML = svg;
+    } catch (e) {
+      el.innerHTML = `<pre class="text-red-500 text-xs">${escapeHtml(String(e))}</pre>`;
+    }
+  }
+}
+
+// ─── Inline comment anchoring ─────────────────────────────────────────────────
+function applyCommentAnchors(container, threads) {
+  for (const thread of threads) {
+    const anchor = thread.anchor;
+    if (!anchor.selectedText) continue;
+    wrapAnchorInDOM(container, thread);
+  }
+  // Click handler for anchors
+  container.querySelectorAll('.comment-anchor').forEach(span => {
+    span.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const tid = span.dataset.threadId;
+      highlightThread(tid);
+    });
+  });
+}
+
+function wrapAnchorInDOM(container, thread) {
+  const target = thread.anchor.selectedText;
+  if (!target) return;
+  const before = thread.anchor.contextBefore || '';
+  const after = thread.anchor.contextAfter || '';
+
+  // Collect every occurrence of the target inside a single text node, scoring
+  // each by how well its surrounding text matches the saved context. This lets
+  // us pick the right occurrence when the same text appears multiple times.
+  const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT, null);
+  const candidates = [];
+  let node;
+  while ((node = walker.nextNode())) {
+    // Don't wrap inside an existing anchor (avoids nesting / double-counting).
+    if (node.parentElement && node.parentElement.closest('.comment-anchor')) continue;
+    const txt = node.textContent;
+    let from = 0, idx;
+    while ((idx = txt.indexOf(target, from)) !== -1) {
+      const pre = txt.substring(Math.max(0, idx - before.length), idx);
+      const post = txt.substring(idx + target.length, idx + target.length + after.length);
+      let score = 0;
+      if (before && pre && before.endsWith(pre.slice(-Math.min(before.length, pre.length)))) score++;
+      if (after && post && after.startsWith(post.slice(0, Math.min(after.length, post.length)))) score++;
+      candidates.push({ node, idx, score });
+      from = idx + target.length;
+    }
+  }
+  if (candidates.length === 0) return; // target spans multiple nodes or is gone
+  candidates.sort((a, b) => b.score - a.score);
+  const best = candidates[0];
+  try {
+    const range = document.createRange();
+    range.setStart(best.node, best.idx);
+    range.setEnd(best.node, best.idx + target.length);
+    const span = document.createElement('span');
+    span.className = 'comment-anchor' + (thread.status === 'resolved' ? ' resolved' : '');
+    span.dataset.threadId = thread.threadId;
+    span.title = thread.status === 'resolved' ? '解決済み' : 'コメントあり';
+    range.surroundContents(span);
+  } catch (e) {
+    // surroundContents fails when the range crosses element boundaries — skip.
+  }
+}
+
+// ─── Thread list rendering ────────────────────────────────────────────────────
+function renderThreadList(threads) {
+  const container = document.getElementById('thread-list');
+  container.innerHTML = '';
+  const filtered = state.filterMode === 'open'
+    ? threads.filter(t => t.status === 'open')
+    : threads;
+
+  if (filtered.length === 0) {
+    container.innerHTML = `<div class="text-xs text-gray-400 dark:text-gray-500 text-center py-6">${state.filterMode === 'open' ? '未解決のコメントはありません' : 'コメントはありません'}</div>`;
+    return;
+  }
+
+  for (const thread of filtered) {
+    container.appendChild(buildThreadCard(thread));
+  }
+}
+
+function buildThreadCard(thread) {
+  const card = document.createElement('div');
+  card.dataset.threadId = thread.threadId;
+  card.className = 'thread-card rounded-lg border p-3 text-sm ' +
+    (thread.status === 'resolved'
+      ? 'border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900 opacity-70'
+      : 'border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-900/20');
+
+  const firstComment = thread.comments[0];
+  const replyCount = thread.comments.length - 1;
+  const isMine = firstComment && firstComment.author === state.currentUser;
+
+  card.innerHTML = `
+    <div class="flex items-start justify-between gap-2 mb-2">
+      <div class="flex items-center gap-1.5">
+        <span class="w-6 h-6 rounded-full bg-indigo-100 dark:bg-indigo-900 text-indigo-600 dark:text-indigo-400 text-xs flex items-center justify-center font-bold flex-shrink-0">${getInitial(firstComment?.authorName || firstComment?.author || '?')}</span>
+        <span class="font-medium text-gray-700 dark:text-gray-300 text-xs">${escapeHtml(firstComment?.authorName || firstComment?.author || '?')}</span>
+        <span class="text-gray-400 dark:text-gray-500 text-xs">${formatTimeAgo(firstComment?.createdAt)}</span>
+      </div>
+      ${thread.status === 'resolved'
+        ? `<span class="text-xs text-green-600 dark:text-green-400 font-medium flex-shrink-0">✓ 解決済み</span>`
+        : `<button class="resolve-btn text-xs text-gray-400 hover:text-green-600 dark:hover:text-green-400 flex-shrink-0" data-id="${thread.threadId}" title="解決済みにする">✓</button>`}
+    </div>
+    <div class="text-xs text-amber-700 dark:text-amber-300 bg-amber-100 dark:bg-amber-900/30 rounded px-2 py-1 mb-2 italic truncate">"${escapeHtml(thread.anchor.selectedText)}"</div>
+    ${firstComment ? `<p class="text-gray-700 dark:text-gray-300 text-xs leading-relaxed">${formatCommentContent(firstComment.content)}</p>` : ''}
+    ${isMine && thread.comments.length > 0
+      ? `<div class="flex gap-2 mt-1.5">
+           <button class="edit-comment-btn text-xs text-gray-400 hover:text-indigo-600 dark:hover:text-indigo-400" data-comment-id="${firstComment.commentId}" data-thread-id="${thread.threadId}">編集</button>
+           <button class="delete-comment-btn text-xs text-gray-400 hover:text-red-500" data-comment-id="${firstComment.commentId}" data-thread-id="${thread.threadId}">削除</button>
+         </div>`
+      : ''}
+    ${replyCount > 0 ? `<details class="mt-2"><summary class="text-xs text-indigo-600 dark:text-indigo-400 cursor-pointer">${replyCount}件の返信</summary><div class="reply-list mt-2 space-y-2 pl-2 border-l-2 border-gray-200 dark:border-gray-700">${thread.comments.slice(1).map(c => buildReplyHtml(c, thread.threadId)).join('')}</div></details>` : ''}
+    ${thread.status !== 'resolved'
+      ? `<button class="reply-btn mt-2 text-xs text-indigo-600 dark:text-indigo-400 hover:underline" data-thread-id="${thread.threadId}">返信する</button>`
+      : `<button class="reopen-btn mt-2 text-xs text-gray-400 hover:text-amber-600 dark:hover:text-amber-400 hover:underline" data-thread-id="${thread.threadId}">再開する</button>`}
+  `;
+
+  card.querySelector('.resolve-btn')?.addEventListener('click', () => onResolveThread(thread.threadId));
+  card.querySelector('.reopen-btn')?.addEventListener('click', () => onReopenThread(thread.threadId));
+  card.querySelector('.reply-btn')?.addEventListener('click', () => openReplyModal(thread.threadId));
+  card.querySelectorAll('.edit-comment-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const cid = btn.dataset.commentId;
+      const comment = thread.comments.find(c => c.commentId === cid);
+      if (comment) onEditComment(cid, comment.content, thread.threadId);
+    });
+  });
+  card.querySelectorAll('.delete-comment-btn').forEach(btn => {
+    btn.addEventListener('click', () => onDeleteComment(btn.dataset.commentId, thread.threadId));
+  });
+  return card;
+}
+
+function buildReplyHtml(comment, threadId) {
+  const isMine = comment.author === state.currentUser;
+  return `
+    <div class="text-xs py-1">
+      <div class="flex items-center gap-1 mb-0.5">
+        <span class="font-medium text-gray-600 dark:text-gray-400">${escapeHtml(comment.authorName || comment.author)}</span>
+        <span class="text-gray-400 dark:text-gray-500">${formatTimeAgo(comment.createdAt)}</span>
+        ${isMine ? `<button class="edit-comment-btn ml-1 text-gray-300 hover:text-indigo-500" data-comment-id="${comment.commentId}" data-thread-id="${threadId}">編集</button>
+          <button class="delete-comment-btn text-gray-300 hover:text-red-500" data-comment-id="${comment.commentId}" data-thread-id="${threadId}">削除</button>` : ''}
+      </div>
+      <p class="text-gray-700 dark:text-gray-300 leading-relaxed">${formatCommentContent(comment.content)}</p>
+    </div>`;
+}
+
+function highlightThread(threadId) {
+  // Scroll to thread card and highlight it
+  const card = document.querySelector(`#thread-list [data-thread-id="${threadId}"]`);
+  if (card) {
+    card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    card.classList.add('active');
+    setTimeout(() => card.classList.remove('active'), 2000);
+  }
+  // Highlight anchor
+  document.querySelectorAll('.comment-anchor').forEach(el => el.classList.remove('active'));
+  document.querySelectorAll(`.comment-anchor[data-thread-id="${threadId}"]`).forEach(el => el.classList.add('active'));
+}
+
+// ─── Selection → new comment ──────────────────────────────────────────────────
+let selectionAnchor = null;
+
+document.getElementById('doc-content').addEventListener('mouseup', handleTextSelection);
+
+function handleTextSelection(e) {
+  const sel = window.getSelection();
+  if (!sel || sel.isCollapsed || !sel.toString().trim()) {
+    hideTooltip();
+    return;
+  }
+  // Only inside doc-content
+  const docContent = document.getElementById('doc-content');
+  if (!docContent.contains(sel.anchorNode)) { hideTooltip(); return; }
+
+  const selectedText = sel.toString().trim();
+  const range = sel.getRangeAt(0);
+  const rect = range.getBoundingClientRect();
+
+  // Capture context from the range's start/end boundaries (the Range is always
+  // normalized start-before-end, so this is correct for backward selections too).
+  const startText = range.startContainer.textContent || '';
+  const endText = range.endContainer.textContent || '';
+  const contextBefore = startText.substring(Math.max(0, range.startOffset - 20), range.startOffset);
+  const contextAfter = endText.substring(range.endOffset, range.endOffset + 20);
+
+  selectionAnchor = { selectedText, contextBefore, contextAfter };
+
+  const tooltip = document.getElementById('comment-tooltip');
+  tooltip.style.left = `${rect.left + rect.width / 2 - 70}px`;
+  tooltip.style.top = `${rect.top - 40}px`;
+  tooltip.style.display = 'block';
+}
+
+document.addEventListener('mousedown', (e) => {
+  if (!e.target.closest('#comment-tooltip') && !e.target.closest('#comment-modal')) {
+    hideTooltip();
+  }
+});
+
+function hideTooltip() {
+  document.getElementById('comment-tooltip').style.display = 'none';
+}
+
+document.getElementById('comment-tooltip').addEventListener('click', () => {
+  if (!selectionAnchor) return;
+  state.pendingAnchor = selectionAnchor;
+  document.getElementById('anchor-preview').textContent = `"${selectionAnchor.selectedText}"`;
+  document.getElementById('comment-input').value = '';
+  showModal('comment-modal');
+  document.getElementById('comment-input').focus();
+  hideTooltip();
+  window.getSelection()?.removeAllRanges();
+});
+
+// Comment submit
+document.getElementById('comment-submit-btn').addEventListener('click', submitNewThread);
+document.getElementById('comment-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) submitNewThread();
+  if (e.key === '@') showMentionDropdown('comment-input', 'mention-dropdown');
+});
+document.getElementById('comment-cancel-btn').addEventListener('click', () => hideModal('comment-modal'));
+
+function submitNewThread() {
+  const raw = document.getElementById('comment-input').value.trim();
+  if (!raw || !state.pendingAnchor) return;
+  const content = mentionsToEmail(raw);
+  const mentions = extractMentions(content);
+  showLoading('送信中…');
+  hideModal('comment-modal');
+  google.script.run
+    .withSuccessHandler(thread => {
+      hideLoading();
+      state.threads.push(thread);
+      const container = document.getElementById('doc-content');
+      wrapAnchorInDOM(container, thread);
+      container.querySelectorAll('.comment-anchor').forEach(span => {
+        span.addEventListener('click', e => {
+          e.stopPropagation();
+          highlightThread(span.dataset.threadId);
+        });
+      });
+      renderThreadList(state.threads);
+      refreshDocListSilently();
+      showToast('コメントを追加しました');
+    })
+    .withFailureHandler(e => { hideLoading(); onError(e); })
+    .createThread(
+      state.currentDocId,
+      state.pendingAnchor.selectedText,
+      state.pendingAnchor.contextBefore,
+      state.pendingAnchor.contextAfter,
+      content,
+      mentions
+    );
+}
+
+// ─── Reply modal ──────────────────────────────────────────────────────────────
+function openReplyModal(threadId) {
+  state.pendingReplyThreadId = threadId;
+  document.getElementById('reply-input').value = '';
+  showModal('reply-modal');
+  document.getElementById('reply-input').focus();
+}
+
+document.getElementById('reply-submit-btn').addEventListener('click', submitReply);
+document.getElementById('reply-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) submitReply();
+  if (e.key === '@') showMentionDropdown('reply-input', 'reply-mention-dropdown');
+});
+document.getElementById('reply-cancel-btn').addEventListener('click', () => hideModal('reply-modal'));
+
+function submitReply() {
+  const raw = document.getElementById('reply-input').value.trim();
+  if (!raw || !state.pendingReplyThreadId) return;
+  const content = mentionsToEmail(raw);
+  const mentions = extractMentions(content);
+  showLoading('送信中…');
+  hideModal('reply-modal');
+  google.script.run
+    .withSuccessHandler(comment => {
+      hideLoading();
+      const thread = state.threads.find(t => t.threadId === state.pendingReplyThreadId);
+      if (thread) thread.comments.push(comment);
+      renderThreadList(state.threads);
+      showToast('返信しました');
+    })
+    .withFailureHandler(e => { hideLoading(); onError(e); })
+    .addReply(state.pendingReplyThreadId, content, mentions);
+}
+
+// ─── Resolve / Reopen ─────────────────────────────────────────────────────────
+function onResolveThread(threadId) {
+  showLoading('処理中…');
+  google.script.run
+    .withSuccessHandler(() => {
+      hideLoading();
+      const thread = state.threads.find(t => t.threadId === threadId);
+      if (thread) thread.status = 'resolved';
+      renderThreadList(state.threads);
+      // Update anchor style
+      document.querySelectorAll(`.comment-anchor[data-thread-id="${threadId}"]`)
+        .forEach(el => { el.classList.add('resolved'); el.title = '解決済み'; });
+      refreshDocListSilently();
+      showToast('解決済みにしました');
+    })
+    .withFailureHandler(e => { hideLoading(); onError(e); })
+    .resolveThread(threadId);
+}
+
+function onReopenThread(threadId) {
+  showLoading('処理中…');
+  google.script.run
+    .withSuccessHandler(() => {
+      hideLoading();
+      const thread = state.threads.find(t => t.threadId === threadId);
+      if (thread) thread.status = 'open';
+      renderThreadList(state.threads);
+      document.querySelectorAll(`.comment-anchor[data-thread-id="${threadId}"]`)
+        .forEach(el => { el.classList.remove('resolved'); el.title = 'コメントあり'; });
+      showToast('スレッドを再開しました');
+    })
+    .withFailureHandler(e => { hideLoading(); onError(e); })
+    .reopenThread(threadId);
+}
+
+// ─── Edit comment ─────────────────────────────────────────────────────────────
+function onEditComment(commentId, currentContent, threadId) {
+  const input = prompt('コメントを編集', currentContent);
+  if (input === null) return;
+  const newContent = mentionsToEmail(input);
+  if (!newContent || newContent === currentContent) return;
+  google.script.run
+    .withSuccessHandler(() => {
+      const thread = state.threads.find(t => t.threadId === threadId);
+      if (thread) {
+        const c = thread.comments.find(c => c.commentId === commentId);
+        if (c) c.content = newContent;
+      }
+      renderThreadList(state.threads);
+      showToast('コメントを更新しました');
+    })
+    .withFailureHandler(onError)
+    .editComment(commentId, newContent);
+}
+
+function onDeleteComment(commentId, threadId) {
+  if (!confirm('このコメントを削除しますか？')) return;
+  google.script.run
+    .withSuccessHandler(() => {
+      const thread = state.threads.find(t => t.threadId === threadId);
+      if (thread) thread.comments = thread.comments.filter(c => c.commentId !== commentId);
+      renderThreadList(state.threads);
+      showToast('コメントを削除しました');
+    })
+    .withFailureHandler(onError)
+    .deleteComment(commentId);
+}
+
+// ─── Thread filter ────────────────────────────────────────────────────────────
+document.getElementById('filter-open-btn').addEventListener('click', () => {
+  state.filterMode = 'open';
+  document.getElementById('filter-open-btn').className = 'text-xs px-2 py-0.5 rounded-full bg-amber-100 dark:bg-amber-900 text-amber-700 dark:text-amber-300 font-medium border border-amber-300 dark:border-amber-700';
+  document.getElementById('filter-all-btn').className = 'text-xs px-2 py-0.5 rounded-full hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400 font-medium';
+  renderThreadList(state.threads);
+});
+
+document.getElementById('filter-all-btn').addEventListener('click', () => {
+  state.filterMode = 'all';
+  document.getElementById('filter-all-btn').className = 'text-xs px-2 py-0.5 rounded-full bg-gray-200 dark:bg-gray-600 text-gray-700 dark:text-gray-200 font-medium';
+  document.getElementById('filter-open-btn').className = 'text-xs px-2 py-0.5 rounded-full hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400 font-medium';
+  renderThreadList(state.threads);
+});
+
+// ─── Edit mode ────────────────────────────────────────────────────────────────
+function switchToViewMode() {
+  document.getElementById('view-panel').classList.remove('hidden');
+  document.getElementById('edit-panel').classList.add('hidden');
+  document.getElementById('empty-state').classList.add('hidden');
+}
+
+function switchToEditMode() {
+  document.getElementById('view-panel').classList.add('hidden');
+  document.getElementById('edit-panel').classList.remove('hidden');
+  document.getElementById('empty-state').classList.add('hidden');
+  document.getElementById('edit-title').textContent = state.currentDocName;
+  const editor = document.getElementById('editor-pane');
+  editor.value = state.currentDocContent;
+  updatePreview();
+  editor.focus();
+}
+
+document.getElementById('edit-btn').addEventListener('click', switchToEditMode);
+document.getElementById('cancel-edit-btn').addEventListener('click', switchToViewMode);
+document.getElementById('save-btn').addEventListener('click', () => saveDocument());
+
+document.getElementById('editor-pane').addEventListener('input', updatePreview);
+
+let previewTimer = null;
+function updatePreview() {
+  clearTimeout(previewTimer);
+  previewTimer = setTimeout(() => {
+    const content = document.getElementById('editor-pane').value;
+    const preview = document.getElementById('preview-pane');
+    preview.innerHTML = renderMarkdown(content);
+    enhanceContent(preview);
+    hljs.highlightAll();
+    // Reset mermaid processed flags
+    preview.querySelectorAll('.mermaid').forEach(el => delete el.dataset.processed);
+    renderMermaidBlocks();
+  }, 200);
+}
+
+function saveDocument(force) {
+  const content = document.getElementById('editor-pane').value;
+  showLoading('保存中…');
+  google.script.run
+    .withSuccessHandler(newLastUpdated => {
+      hideLoading();
+      state.currentDocContent = content;
+      state.currentDocLastUpdated = newLastUpdated || Date.now();
+      showToast('保存しました');
+      switchToViewMode();
+      renderDocument(content, state.threads);
+    })
+    .withFailureHandler(e => {
+      hideLoading();
+      const msg = String((e && e.message) || e);
+      if (msg.indexOf('CONFLICT') !== -1) {
+        // Someone else saved since we opened the doc. Let the user choose.
+        if (confirm('他のユーザーがこのドキュメントを更新しました。\n\n「OK」: 相手の変更を読み込み直す（自分の編集内容は破棄されます）\n「キャンセル」: 自分の内容で上書き保存する')) {
+          switchToViewMode();
+          openDocument(state.currentDocId, state.currentDocName);
+        } else {
+          saveDocument(true); // force overwrite
+        }
+      } else {
+        onError(e);
+      }
+    })
+    // expectedLastUpdated=0 forces an overwrite (skips the conflict check).
+    .updateDocument(state.currentDocId, content, force ? 0 : (state.currentDocLastUpdated || 0));
+}
+
+// ─── New document ─────────────────────────────────────────────────────────────
+document.getElementById('new-doc-btn').addEventListener('click', () => {
+  document.getElementById('new-doc-title').value = '';
+  showModal('new-doc-modal');
+  document.getElementById('new-doc-title').focus();
+});
+document.getElementById('new-doc-cancel').addEventListener('click', () => hideModal('new-doc-modal'));
+document.getElementById('new-doc-submit').addEventListener('click', createNewDocument);
+document.getElementById('new-doc-title').addEventListener('keydown', e => { if (e.key === 'Enter') createNewDocument(); });
+
+function createNewDocument() {
+  const title = document.getElementById('new-doc-title').value.trim();
+  if (!title || !state.currentFolderId) return;
+  showLoading('作成中…');
+  hideModal('new-doc-modal');
+  google.script.run
+    .withSuccessHandler(doc => {
+      hideLoading();
+      openDocument(doc.id, doc.name);
+      loadDocList(state.currentFolderId);
+      showToast('ドキュメントを作成しました');
+    })
+    .withFailureHandler(e => { hideLoading(); onError(e); })
+    .createDocument(state.currentFolderId, title);
+}
+
+// Delete document
+document.getElementById('delete-doc-btn').addEventListener('click', () => {
+  if (!confirm(`"${state.currentDocName}" を削除しますか？`)) return;
+  showLoading('削除中…');
+  google.script.run
+    .withSuccessHandler(() => {
+      hideLoading();
+      state.currentDocId = null;
+      document.getElementById('view-panel').classList.add('hidden');
+      document.getElementById('empty-state').classList.remove('hidden');
+      loadDocList(state.currentFolderId);
+      showToast('削除しました');
+    })
+    .withFailureHandler(e => { hideLoading(); onError(e); })
+    .deleteDocument(state.currentDocId);
+});
+
+// ─── New folder ───────────────────────────────────────────────────────────────
+document.getElementById('new-folder-cancel').addEventListener('click', () => hideModal('new-folder-modal'));
+document.getElementById('new-folder-submit').addEventListener('click', createNewFolder);
+document.getElementById('new-folder-name').addEventListener('keydown', e => { if (e.key === 'Enter') createNewFolder(); });
+
+function createNewFolder() {
+  const name = document.getElementById('new-folder-name').value.trim();
+  if (!name) return;
+  showLoading('作成中…');
+  hideModal('new-folder-modal');
+  google.script.run
+    .withSuccessHandler(folder => {
+      hideLoading();
+      state.folders.push(folder);
+      renderFolderTabs();
+      selectFolder(folder.id);
+      showToast('フォルダを作成しました');
+    })
+    .withFailureHandler(e => { hideLoading(); onError(e); })
+    .createFolder(name);
+}
+
+// ─── Members ──────────────────────────────────────────────────────────────────
+document.getElementById('members-btn').addEventListener('click', () => {
+  renderMemberList();
+  showModal('members-modal');
+});
+document.getElementById('members-close-btn').addEventListener('click', () => hideModal('members-modal'));
+
+function loadMembers() {
+  google.script.run
+    .withSuccessHandler(members => {
+      state.members = members;
+      // Assignee chips/selects depend on the member list; refresh once it loads.
+      if (state.docs && state.docs.length) renderDocList();
+    })
+    .withFailureHandler(() => {})
+    .getMembers();
+}
+
+function renderMemberList() {
+  const list = document.getElementById('member-list');
+  list.innerHTML = '';
+  if (state.members.length === 0) {
+    list.innerHTML = '<div class="text-xs text-gray-400 text-center py-2">メンバーが登録されていません</div>';
+    return;
+  }
+  for (const m of state.members) {
+    const row = document.createElement('div');
+    row.className = 'flex items-center justify-between py-1.5 px-2 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700';
+    row.innerHTML = `
+      <div>
+        <span class="text-sm font-medium text-gray-700 dark:text-gray-300">${escapeHtml(m.displayName)}</span>
+        <span class="text-xs text-gray-400 dark:text-gray-500 ml-2">${escapeHtml(m.email)}</span>
+      </div>
+      <button class="remove-member-btn text-xs text-red-400 hover:text-red-600 px-2 py-0.5 rounded hover:bg-red-50 dark:hover:bg-red-900/30" data-email="${escapeHtml(m.email)}">削除</button>`;
+    row.querySelector('.remove-member-btn').addEventListener('click', () => {
+      if (!confirm(`${m.displayName} を削除しますか？`)) return;
+      showLoading('削除中…');
+      google.script.run
+        .withSuccessHandler(() => {
+          hideLoading();
+          state.members = state.members.filter(x => x.email !== m.email);
+          renderMemberList();
+          showToast('メンバーを削除しました');
+        })
+        .withFailureHandler(e => { hideLoading(); onError(e); })
+        .removeMember(m.email);
+    });
+    list.appendChild(row);
+  }
+}
+
+document.getElementById('add-member-btn').addEventListener('click', () => {
+  const emailEl = document.getElementById('member-email-input');
+  const nameEl = document.getElementById('member-name-input');
+  const btn = document.getElementById('add-member-btn');
+  const email = emailEl.value.trim();
+  const name = nameEl.value.trim();
+  if (!email || !name) return;
+  // Immediate feedback: a GAS round-trip takes ~1s, so disable to avoid double
+  // submits and show progress.
+  btn.disabled = true;
+  btn.textContent = '追加中…';
+  google.script.run
+    .withSuccessHandler(member => {
+      btn.disabled = false;
+      btn.textContent = '追加';
+      state.members.push(member);
+      renderMemberList();
+      emailEl.value = '';
+      nameEl.value = '';
+      showToast('メンバーを追加しました');
+    })
+    .withFailureHandler(e => {
+      btn.disabled = false;
+      btn.textContent = '追加';
+      onError(e);
+    })
+    .addMember(email, name);
+});
+
+// ─── Mention dropdown ─────────────────────────────────────────────────────────
+function showMentionDropdown(inputId, dropdownId) {
+  state.activeMentionInput = inputId;
+  const dropdown = document.getElementById(dropdownId);
+  dropdown.innerHTML = '';
+  if (state.members.length === 0) return;
+
+  dropdown.classList.remove('hidden');
+  for (const m of state.members) {
+    const item = document.createElement('div');
+    item.className = 'px-3 py-1.5 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 cursor-pointer text-sm';
+    item.innerHTML = `<span class="font-medium">${escapeHtml(m.displayName)}</span> <span class="text-gray-400 text-xs">${escapeHtml(m.email)}</span>`;
+    item.addEventListener('click', () => {
+      const input = document.getElementById(inputId);
+      const val = input.value;
+      const atIdx = val.lastIndexOf('@');
+      input.value = (atIdx !== -1 ? val.substring(0, atIdx) : val) + `@${m.displayName} `;
+      dropdown.classList.add('hidden');
+      input.focus();
+    });
+    dropdown.appendChild(item);
+  }
+}
+
+// Close mention dropdowns on outside click
+document.addEventListener('click', e => {
+  if (!e.target.closest('#mention-dropdown') && !e.target.closest('#comment-input'))
+    document.getElementById('mention-dropdown').classList.add('hidden');
+  if (!e.target.closest('#reply-mention-dropdown') && !e.target.closest('#reply-input'))
+    document.getElementById('reply-mention-dropdown').classList.add('hidden');
+});
+
+// Converts the human-friendly @表示名 typed in the box (and inserted by the
+// mention dropdown) into the @email the server stores and matches on. Longest
+// names first so "@田中 太郎" is handled before "@田中". Plain string replace, so
+// names with spaces / symbols are safe; a raw @email typed directly still works.
+function mentionsToEmail(text) {
+  let result = text;
+  const sorted = [...state.members].sort((a, b) => (b.displayName || '').length - (a.displayName || '').length);
+  for (const m of sorted) {
+    if (!m.displayName) continue;
+    result = result.split('@' + m.displayName).join('@' + m.email);
+  }
+  return result;
+}
+
+function extractMentions(content) {
+  const matches = content.match(/@([\w.+\-@]+)/g) || [];
+  return [...new Set(matches.map(m => m.substring(1)))];
+}
+
+function formatCommentContent(content) {
+  // Mentions are stored as @email (stable for matching/notifications) but shown
+  // as @表示名 when the email belongs to a known member.
+  return escapeHtml(content).replace(/@([\w.+\-@]+)/g, (full, handle) => {
+    const member = state.members.find(x => x.email === handle);
+    const label = member ? member.displayName : handle;
+    return `<span class="text-indigo-600 dark:text-indigo-400 font-medium" title="@${escapeHtml(handle)}">@${escapeHtml(label)}</span>`;
+  });
+}
+
+// ─── Notifications ────────────────────────────────────────────────────────────
+document.getElementById('notif-btn').addEventListener('click', toggleNotifPanel);
+document.getElementById('mark-all-read-btn').addEventListener('click', () => {
+  google.script.run
+    .withSuccessHandler(() => {
+      state.unreadCount = 0;
+      updateNotifBadge();
+      loadNotifications();
+      showToast('すべて既読にしました');
+    })
+    .withFailureHandler(onError)
+    .markAllNotificationsRead();
+});
+
+function toggleNotifPanel() {
+  const panel = document.getElementById('notif-panel');
+  const isHidden = panel.classList.toggle('hidden');
+  if (!isHidden) {
+    panel.classList.add('flex');
+    panel.classList.remove('hidden');
+    loadNotifications();
+  } else {
+    panel.classList.remove('flex');
+  }
+}
+
+// Close notif panel on outside click
+document.addEventListener('click', e => {
+  const panel = document.getElementById('notif-panel');
+  if (!panel.classList.contains('hidden') && !e.target.closest('#notif-panel') && !e.target.closest('#notif-btn')) {
+    panel.classList.add('hidden');
+    panel.classList.remove('flex');
+  }
+});
+
+function loadNotifications() {
+  document.getElementById('notif-list').innerHTML = '<div class="p-3 text-xs text-gray-400">読み込み中…</div>';
+  google.script.run
+    .withSuccessHandler(renderNotifications)
+    .withFailureHandler(() => {})
+    .getNotifications();
+}
+
+function renderNotifications(notifs) {
+  const list = document.getElementById('notif-list');
+  if (notifs.length === 0) {
+    list.innerHTML = '<div class="p-4 text-xs text-gray-400 text-center">通知はありません</div>';
+    return;
+  }
+  list.innerHTML = '';
+  for (const n of notifs) {
+    const item = document.createElement('div');
+    item.className = 'px-3 py-2.5 border-b border-gray-100 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700 cursor-pointer ' +
+      (n.isRead ? '' : 'bg-indigo-50 dark:bg-indigo-900/20');
+    item.innerHTML = `
+      <div class="flex items-start gap-2">
+        <span class="text-base mt-0.5 flex-shrink-0">${notifIcon(n.type)}</span>
+        <div class="flex-1 min-w-0">
+          <p class="text-xs text-gray-700 dark:text-gray-300 leading-snug">${escapeHtml(n.message)}</p>
+          <p class="text-xs text-gray-400 dark:text-gray-500 mt-0.5 truncate">${escapeHtml(n.documentName)}</p>
+          <p class="text-xs text-gray-400 dark:text-gray-500">${formatTimeAgo(n.createdAt)}</p>
+        </div>
+        ${!n.isRead ? '<span class="w-2 h-2 bg-indigo-500 rounded-full mt-1 flex-shrink-0"></span>' : ''}
+      </div>`;
+    item.addEventListener('click', () => {
+      if (!n.isRead) {
+        google.script.run.withSuccessHandler(() => {}).withFailureHandler(() => {}).markNotificationRead(n.notifId);
+        item.classList.remove('bg-indigo-50', 'dark:bg-indigo-900/20');
+        state.unreadCount = Math.max(0, state.unreadCount - 1);
+        updateNotifBadge();
+      }
+      if (n.documentId) {
+        toggleNotifPanel();
+        openDocument(n.documentId, n.documentName);
+      }
+    });
+    list.appendChild(item);
+  }
+}
+
+function notifIcon(type) {
+  return type === 'mention' ? '💬' : type === 'reply' ? '↩️' : '✅';
+}
+
+function updateNotifBadge() {
+  const badge = document.getElementById('notif-badge');
+  if (state.unreadCount > 0) {
+    badge.textContent = state.unreadCount > 9 ? '9+' : String(state.unreadCount);
+    badge.classList.remove('hidden');
+    badge.classList.add('flex');
+  } else {
+    badge.classList.add('hidden');
+    badge.classList.remove('flex');
+  }
+}
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+function showModal(id) {
+  const el = document.getElementById(id);
+  el.classList.remove('hidden');
+  el.classList.add('flex');
+}
+function hideModal(id) {
+  const el = document.getElementById(id);
+  el.classList.add('hidden');
+  el.classList.remove('flex');
+}
+function showLoading(msg) {
+  document.getElementById('loading-msg').textContent = msg || '処理中…';
+  const el = document.getElementById('loading');
+  el.classList.remove('hidden');
+  el.classList.add('flex');
+}
+function hideLoading() {
+  const el = document.getElementById('loading');
+  el.classList.add('hidden');
+  el.classList.remove('flex');
+}
+
+let toastTimer = null;
+function showToast(msg) {
+  const toast = document.getElementById('toast');
+  toast.textContent = msg;
+  toast.classList.remove('hidden');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => toast.classList.add('hidden'), 2500);
+}
+
+function onError(e) {
+  hideLoading();
+  showToast('エラー: ' + String(e.message || e));
+  console.error(e);
+}
+
+function escapeHtml(str) {
+  if (!str) return '';
+  return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+
+function getInitial(name) {
+  return (name || '?').charAt(0).toUpperCase();
+}
+
+function formatDate(ms) {
+  if (!ms) return '';
+  const d = new Date(Number(ms));
+  return d.toLocaleDateString('ja-JP', { month: 'short', day: 'numeric' });
+}
+
+function formatTimeAgo(iso) {
+  if (!iso) return '';
+  const diff = Date.now() - new Date(iso).getTime();
+  const m = Math.floor(diff / 60000);
+  if (m < 1) return 'たった今';
+  if (m < 60) return `${m}分前`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}時間前`;
+  const d = Math.floor(h / 24);
+  return `${d}日前`;
+}
+
+function refreshDocListSilently() {
+  if (!state.currentFolderId) return;
+  google.script.run
+    .withSuccessHandler(docs => renderDocList(docs))
+    .withFailureHandler(() => {})
+    .getDocumentList(state.currentFolderId);
+}
+
+// Close modals on backdrop click
+['comment-modal','reply-modal','new-doc-modal','new-folder-modal'].forEach(id => {
+  document.getElementById(id).addEventListener('click', e => {
+    if (e.target === document.getElementById(id)) hideModal(id);
+  });
+});
+</script>
+</body>
+</html>

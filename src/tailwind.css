@@ -1,0 +1,7 @@
+@import "tailwindcss";
+
+/* All markup and dynamically-built class strings live in this single file. */
+@source "../static/index.html";
+
+/* Class-based dark mode (the UI toggles `.dark` on <html>). */
+@custom-variant dark (&:where(.dark, .dark *));

@@ -1,0 +1,40 @@
+# dependencies (bun install)
+node_modules
+
+# clasp local config (contains your GAS scriptId) — copy from .clasp.json.example
+.clasp.json
+# clasp credentials (normally in $HOME; never commit if present)
+.clasprc.json
+
+# build output — rebuilt with `bun run build`, pushed to Apps Script via clasp
+out
+dist
+*.tgz
+
+# code coverage
+coverage
+*.lcov
+
+# logs
+logs
+*.log
+report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
+
+# dotenv environment variable files
+.env
+.env.development.local
+.env.test.local
+.env.production.local
+.env.local
+
+# caches
+.eslintcache
+.cache
+*.tsbuildinfo
+
+# editors / IDEs
+.idea
+.vscode
+
+# Finder (macOS) folder config
+.DS_Store

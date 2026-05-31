@@ -1,0 +1,25 @@
+{
+  "name": "md-collab",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "build": "vite build && bun run build:css && bun run scripts/inline-css.ts",
+    "build:css": "tailwindcss -i src/tailwind.css -o dist/.tw.css --minify",
+    "dev": "vite build --watch",
+    "push": "bun run build && bun run clasp:push",
+    "clasp:login": "clasp login",
+    "clasp:create": "clasp create --type standalone --title md-collab --rootDir dist",
+    "clasp:push": "clasp push",
+    "clasp:open": "clasp open"
+  },
+  "devDependencies": {
+    "@google/clasp": "^3.3.0",
+    "@tailwindcss/cli": "^4.3.0",
+    "@types/bun": "latest",
+    "@types/google-apps-script": "^2.0.9",
+    "gas-vite-plugin": "^0.0.4",
+    "tailwindcss": "^4.3.0",
+    "typescript": "^6.0.3",
+    "vite": "^8.0.14"
+  }
+}
