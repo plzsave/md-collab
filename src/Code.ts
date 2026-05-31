@@ -526,6 +526,7 @@ export function getDocumentName(fileId: string): string {
 
 export function getThreadsForDocument(documentId: string): CommentThread[] {
   requireMember();
+  getManagedFile(documentId); // ensure the document belongs to this workspace
   const tSheet = getSheet(SHEETS.THREADS);
   const cSheet = getSheet(SHEETS.COMMENTS);
   const members = getMembers();
