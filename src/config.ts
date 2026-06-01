@@ -1,5 +1,4 @@
 export const CONFIG = {
-  ROOT_FOLDER_NAME: "md-collab",
   DB_SPREADSHEET_NAME: "md-collab-db",
 } as const;
 

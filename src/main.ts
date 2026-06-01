@@ -1,8 +1,10 @@
 export {
   doGet,
   getAppState,
+  setupDb,
   getFolders,
   createFolder,
+  linkFolder,
   renameFolder,
   deleteFolder,
   getDocumentList,

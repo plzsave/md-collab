@@ -73,6 +73,10 @@ export interface AppState {
   currentUser: string;
   currentUserName: string;
   isMember: boolean;
+  /** True until the DB spreadsheet has been provisioned via setupDb. */
+  isSetupRequired: boolean;
+  /** Whether the current user is the deployer (only they may run setup). */
+  isOwner: boolean;
   folders: Folder[];
   statuses: DocStatus[];
   unreadCount: number;

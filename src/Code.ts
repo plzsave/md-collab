@@ -67,7 +67,9 @@ const CACHE_KEYS = {
 } as const;
 
 const PROP_KEYS = {
-  ROOT_FOLDER_ID: "rootFolderId",
+  // Optional folder (may live on a Shared Drive) holding the DB spreadsheet and
+  // any folders created via createFolder. Unset means "use My Drive root".
+  BASE_FOLDER_ID: "baseFolderId",
   DB_SPREADSHEET_ID: "dbSpreadsheetId",
 } as const;
 
@@ -125,27 +127,25 @@ function isOwner(email: string): boolean {
   return !!email && email === ownerEmail();
 }
 
-// ─── Drive / Folder ──────────────────────────────────────────────────────────
+// ─── Drive / Folder placement ────────────────────────────────────────────────
+//
+// The DB spreadsheet and folders created via createFolder live inside an optional
+// "base folder" the deployer picks once at setup (setupDb). That base folder can
+// be a folder on a Shared Drive (共有ドライブ), so the workspace keeps working even
+// if the deployer leaves the organization. When no base folder is configured we
+// fall back to My Drive root. Existing folders scattered elsewhere are attached
+// with linkFolder instead of being created here.
 
-let _rootFolder: GoogleAppsScript.Drive.Folder | null = null;
-
-function getOrCreateRootFolder(): GoogleAppsScript.Drive.Folder {
-  if (_rootFolder) return _rootFolder;
-  const props = PropertiesService.getScriptProperties();
-  // Fast path: open the folder directly by its remembered id (no Drive search).
-  const savedId = props.getProperty(PROP_KEYS.ROOT_FOLDER_ID);
-  if (savedId) {
-    try {
-      _rootFolder = DriveApp.getFolderById(savedId);
-      return _rootFolder;
-    } catch (e) {
-      // Saved id no longer resolves (folder removed); fall through to re-resolve.
-    }
+/** The configured base folder, or null when none was chosen (use My Drive root). */
+function getBaseFolder(): GoogleAppsScript.Drive.Folder | null {
+  const id = PropertiesService.getScriptProperties().getProperty(PROP_KEYS.BASE_FOLDER_ID);
+  if (!id) return null;
+  try {
+    return DriveApp.getFolderById(id);
+  } catch (e) {
+    // Configured base folder no longer resolves; behave as if unset.
+    return null;
   }
-  const iter = DriveApp.getFoldersByName(CONFIG.ROOT_FOLDER_NAME);
-  _rootFolder = iter.hasNext() ? iter.next() : DriveApp.createFolder(CONFIG.ROOT_FOLDER_NAME);
-  props.setProperty(PROP_KEYS.ROOT_FOLDER_ID, _rootFolder.getId());
-  return _rootFolder;
 }
 
 // ─── Spreadsheet (DB) ────────────────────────────────────────────────────────
@@ -154,31 +154,62 @@ function getOrCreateRootFolder(): GoogleAppsScript.Drive.Folder {
 // call). Opening the DB does several Drive round-trips, so we do it at most once.
 let _db: GoogleAppsScript.Spreadsheet.Spreadsheet | null = null;
 
+/** Whether the DB has been provisioned (setupDb has run). */
+function isDbConfigured(): boolean {
+  return !!PropertiesService.getScriptProperties().getProperty(PROP_KEYS.DB_SPREADSHEET_ID);
+}
+
 function getOrCreateDb(): GoogleAppsScript.Spreadsheet.Spreadsheet {
   if (_db) return _db;
-  const props = PropertiesService.getScriptProperties();
-  // Fast path: open the DB directly by its remembered id (skips Drive lookups).
-  const savedId = props.getProperty(PROP_KEYS.DB_SPREADSHEET_ID);
-  if (savedId) {
-    try {
-      _db = SpreadsheetApp.openById(savedId);
-      return _db;
-    } catch (e) {
-      // Saved id no longer resolves; fall through to re-resolve / recreate.
-    }
+  const savedId = PropertiesService.getScriptProperties().getProperty(PROP_KEYS.DB_SPREADSHEET_ID);
+  if (!savedId) {
+    // Provisioning (setupDb) must run first. getAppState short-circuits before
+    // reaching here, so this only fires on a stray data call before setup.
+    throw new Error("セットアップが完了していません。");
   }
-  const root = getOrCreateRootFolder();
-  const files = root.getFilesByName(CONFIG.DB_SPREADSHEET_NAME);
-  if (files.hasNext()) {
-    _db = SpreadsheetApp.openById(files.next().getId());
-  } else {
-    const ss = SpreadsheetApp.create(CONFIG.DB_SPREADSHEET_NAME);
-    DriveApp.getFileById(ss.getId()).moveTo(root);
-    initSheets(ss);
-    _db = ss;
-  }
-  props.setProperty(PROP_KEYS.DB_SPREADSHEET_ID, _db.getId());
+  _db = SpreadsheetApp.openById(savedId);
   return _db;
+}
+
+/**
+ * One-time provisioning: create the DB spreadsheet (optionally inside the chosen
+ * base folder) and remember both ids. Restricted to the deployer/owner — while no
+ * DB exists there are no members yet, so isAuthorized() would let anyone in.
+ *
+ * `baseFolderId` may be empty (DB goes to My Drive root) or a folder id copied
+ * from a Drive URL, including a Shared Drive folder.
+ */
+export function setupDb(baseFolderId: string): { ok: true } {
+  return withLock(() => {
+    if (!isOwner(currentUserEmail())) {
+      throw new Error("セットアップはアプリのデプロイ者のみ実行できます。");
+    }
+    if (isDbConfigured()) throw new Error("すでにセットアップ済みです。");
+
+    const props = PropertiesService.getScriptProperties();
+    const trimmed = String(baseFolderId || "").trim();
+    let baseFolder: GoogleAppsScript.Drive.Folder | null = null;
+    if (trimmed) {
+      try {
+        baseFolder = DriveApp.getFolderById(trimmed);
+      } catch (e) {
+        throw new Error("フォルダが見つかりません。フォルダIDを確認してください。");
+      }
+      props.setProperty(PROP_KEYS.BASE_FOLDER_ID, baseFolder.getId());
+    }
+
+    const ss = SpreadsheetApp.create(CONFIG.DB_SPREADSHEET_NAME);
+    initSheets(ss);
+    if (baseFolder) {
+      // Move the freshly created spreadsheet out of My Drive into the base folder.
+      // For a Shared Drive target this transfers ownership to the drive; it works
+      // when the deployer has write (Contributor+) access there.
+      DriveApp.getFileById(ss.getId()).moveTo(baseFolder);
+    }
+    props.setProperty(PROP_KEYS.DB_SPREADSHEET_ID, ss.getId());
+    _db = ss;
+    return { ok: true };
+  });
 }
 
 function initSheets(ss: GoogleAppsScript.Spreadsheet.Spreadsheet): void {
@@ -227,12 +258,40 @@ function getManagedDriveFolderIds(): Set<string> {
 export function createFolder(name: string): Folder {
   return withLock(() => {
     requireMember();
-    const root = getOrCreateRootFolder();
-    const driveFolder = root.createFolder(name);
+    const base = getBaseFolder();
+    const driveFolder = base ? base.createFolder(name) : DriveApp.createFolder(name);
     const id = uuid();
     const sheet = getSheet(SHEETS.FOLDERS);
     sheet.appendRow([id, name, driveFolder.getId(), now(), currentUserEmail()]);
     return { id, name };
+  });
+}
+
+/**
+ * Attach an existing Drive folder (anywhere the deployer can access, including a
+ * Shared Drive) as a workspace folder rather than creating a new one. `name`
+ * defaults to the folder's own name. The same Drive folder cannot be linked twice.
+ */
+export function linkFolder(driveFolderId: string, name?: string): Folder {
+  return withLock(() => {
+    requireMember();
+    const driveId = String(driveFolderId || "").trim();
+    if (!driveId) throw new Error("フォルダIDを入力してください。");
+    let driveFolder: GoogleAppsScript.Drive.Folder;
+    try {
+      driveFolder = DriveApp.getFolderById(driveId);
+    } catch (e) {
+      throw new Error("フォルダが見つかりません。フォルダIDを確認してください。");
+    }
+    const resolvedDriveId = driveFolder.getId();
+    if (getManagedDriveFolderIds().has(resolvedDriveId)) {
+      throw new Error("このフォルダはすでに追加されています。");
+    }
+    const displayName = String(name || "").trim() || driveFolder.getName();
+    const id = uuid();
+    const sheet = getSheet(SHEETS.FOLDERS);
+    sheet.appendRow([id, displayName, resolvedDriveId, now(), currentUserEmail()]);
+    return { id, name: displayName };
   });
 }
 
@@ -927,6 +986,20 @@ function createResolveNotifications(
 
 export function getAppState(): AppState {
   const user = currentUserEmail();
+  // Before provisioning there is no DB to read; tell the client to show setup.
+  // Only the deployer can act on it, so surface isOwner for the UI to branch on.
+  if (!isDbConfigured()) {
+    return {
+      currentUser: user,
+      currentUserName: user,
+      isMember: false,
+      isSetupRequired: true,
+      isOwner: isOwner(user),
+      folders: [],
+      statuses: [],
+      unreadCount: 0,
+    };
+  }
   const members = getMembers();
   const member = isAuthorized(user, members);
   // Non-members get an empty workspace view; the UI shows an access notice.
@@ -942,6 +1015,8 @@ export function getAppState(): AppState {
     currentUser: user,
     currentUserName: getMemberDisplayName(user, members),
     isMember: member,
+    isSetupRequired: false,
+    isOwner: isOwner(user),
     folders,
     statuses,
     unreadCount,

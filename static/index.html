@@ -279,10 +279,16 @@
 <div id="new-folder-modal" class="fixed inset-0 bg-black/40 z-50 hidden items-center justify-center">
   <div class="bg-white dark:bg-gray-800 rounded-xl shadow-xl w-full max-w-sm mx-4 fade-in">
     <div class="p-4 border-b border-gray-200 dark:border-gray-700">
-      <p class="text-sm font-semibold text-gray-700 dark:text-gray-300">新規フォルダ</p>
+      <p class="text-sm font-semibold text-gray-700 dark:text-gray-300">フォルダを追加</p>
     </div>
     <div class="p-4">
+      <div class="flex gap-1 mb-3 text-xs">
+        <button id="folder-mode-new" type="button" class="flex-1 px-2 py-1.5 rounded-md bg-indigo-600 text-white font-medium">新規作成</button>
+        <button id="folder-mode-link" type="button" class="flex-1 px-2 py-1.5 rounded-md text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700">既存をリンク</button>
+      </div>
       <input id="new-folder-name" type="text" class="w-full border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-2 text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="フォルダ名">
+      <input id="link-folder-id" type="text" class="w-full mt-2 border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-2 text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-500 hidden" placeholder="既存フォルダのID">
+      <p id="link-folder-hint" class="hidden text-xs text-gray-400 mt-1">共有ドライブのフォルダも指定できます。名前を空欄にするとフォルダ名を使用します。</p>
     </div>
     <div class="p-3 border-t border-gray-200 dark:border-gray-700 flex justify-end gap-2">
       <button id="new-folder-cancel" class="text-sm px-4 py-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-600 dark:text-gray-300">キャンセル</button>
@@ -345,6 +351,23 @@
 <div id="toast" class="fixed bottom-4 right-4 bg-gray-800 dark:bg-gray-700 text-white text-sm px-4 py-2.5 rounded-lg shadow-lg z-50 hidden fade-in"></div>
 
 <!-- Access denied overlay (non-members) -->
+<!-- First-run setup screen (shown until the DB spreadsheet is provisioned) -->
+<div id="setup-screen" class="fixed inset-0 bg-gray-50 dark:bg-gray-900 z-50 hidden flex-col items-center justify-center px-6">
+  <div class="w-full max-w-md text-center">
+    <svg class="w-14 h-14 mb-4 mx-auto text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z"/>
+    </svg>
+    <p class="text-lg font-medium text-gray-700 dark:text-gray-200">初期セットアップ</p>
+    <div id="setup-owner" class="hidden mt-2">
+      <p class="text-sm text-gray-500 dark:text-gray-400">データを保存するスプレッドシートを作成します。<br>共有ドライブ上に置く場合は、保存先フォルダのIDを入力してください。<br>空欄の場合はマイドライブに作成されます。</p>
+      <input id="setup-folder-id" type="text" class="w-full mt-4 border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-2 text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="保存先フォルダID（任意）">
+      <p class="text-xs text-gray-400 mt-1 text-left">DriveでフォルダのURL <span class="font-mono">/folders/<b>XXXX</b></span> の <b>XXXX</b> 部分がIDです。</p>
+      <button id="setup-submit" class="w-full mt-4 text-sm px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-medium">セットアップを実行</button>
+    </div>
+    <p id="setup-nonowner" class="hidden text-sm text-gray-500 dark:text-gray-400 mt-2">アプリの初期セットアップがまだ完了していません。<br>デプロイ者による初期設定をお待ちください。</p>
+  </div>
+</div>
+
 <div id="access-denied" class="fixed inset-0 bg-gray-50 dark:bg-gray-900 z-50 hidden flex-col items-center justify-center text-center px-6">
   <svg class="w-14 h-14 mb-4 text-gray-300 dark:text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/>
@@ -410,6 +433,10 @@ function onAppState(data) {
   state.statuses = data.statuses || [];
   state.unreadCount = data.unreadCount || 0;
   hideLoading();
+  if (data.isSetupRequired) {
+    showSetupScreen(data.isOwner);
+    return;
+  }
   if (!data.isMember) {
     document.getElementById('access-denied-email').textContent = data.currentUser || '';
     const ad = document.getElementById('access-denied');
@@ -473,7 +500,7 @@ function renderFolderTabs() {
   addBtn.className = 'text-sm px-2 py-1.5 rounded-md text-gray-400 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-gray-100 dark:hover:bg-gray-700';
   addBtn.title = '新規フォルダ';
   addBtn.innerHTML = '<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>';
-  addBtn.addEventListener('click', () => showModal('new-folder-modal'));
+  addBtn.addEventListener('click', () => { resetFolderModal(); showModal('new-folder-modal'); });
   container.appendChild(addBtn);
 }
 
@@ -1427,27 +1454,91 @@ document.getElementById('delete-doc-btn').addEventListener('click', () => {
     .deleteDocument(state.currentDocId);
 });
 
-// ─── New folder ───────────────────────────────────────────────────────────────
-document.getElementById('new-folder-cancel').addEventListener('click', () => hideModal('new-folder-modal'));
-document.getElementById('new-folder-submit').addEventListener('click', createNewFolder);
-document.getElementById('new-folder-name').addEventListener('keydown', e => { if (e.key === 'Enter') createNewFolder(); });
+// ─── New / linked folder ────────────────────────────────────────────────────
+let folderModalMode = 'new'; // 'new' = create a folder, 'link' = attach an existing one
 
-function createNewFolder() {
+function setFolderMode(mode) {
+  folderModalMode = mode;
+  const isNew = mode === 'new';
+  const active = 'flex-1 px-2 py-1.5 rounded-md bg-indigo-600 text-white font-medium';
+  const inactive = 'flex-1 px-2 py-1.5 rounded-md text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700';
+  document.getElementById('folder-mode-new').className = isNew ? active : inactive;
+  document.getElementById('folder-mode-link').className = isNew ? inactive : active;
+  document.getElementById('link-folder-id').classList.toggle('hidden', isNew);
+  document.getElementById('link-folder-hint').classList.toggle('hidden', isNew);
+  document.getElementById('new-folder-name').placeholder = isNew ? 'フォルダ名' : 'フォルダ名（任意）';
+}
+
+document.getElementById('folder-mode-new').addEventListener('click', () => setFolderMode('new'));
+document.getElementById('folder-mode-link').addEventListener('click', () => setFolderMode('link'));
+document.getElementById('new-folder-cancel').addEventListener('click', () => { hideModal('new-folder-modal'); resetFolderModal(); });
+document.getElementById('new-folder-submit').addEventListener('click', submitFolder);
+document.getElementById('new-folder-name').addEventListener('keydown', e => { if (e.key === 'Enter') submitFolder(); });
+document.getElementById('link-folder-id').addEventListener('keydown', e => { if (e.key === 'Enter') submitFolder(); });
+
+function resetFolderModal() {
+  document.getElementById('new-folder-name').value = '';
+  document.getElementById('link-folder-id').value = '';
+  setFolderMode('new');
+}
+
+function onFolderAdded(msg) {
+  return folder => {
+    hideLoading();
+    state.folders.push(folder);
+    renderFolderTabs();
+    selectFolder(folder.id);
+    showToast(msg);
+    resetFolderModal();
+  };
+}
+
+function submitFolder() {
+  if (folderModalMode === 'link') {
+    const driveId = document.getElementById('link-folder-id').value.trim();
+    const name = document.getElementById('new-folder-name').value.trim();
+    if (!driveId) return;
+    showLoading('リンク中…');
+    hideModal('new-folder-modal');
+    google.script.run
+      .withSuccessHandler(onFolderAdded('フォルダをリンクしました'))
+      .withFailureHandler(e => { hideLoading(); onError(e); })
+      .linkFolder(driveId, name);
+    return;
+  }
   const name = document.getElementById('new-folder-name').value.trim();
   if (!name) return;
   showLoading('作成中…');
   hideModal('new-folder-modal');
   google.script.run
-    .withSuccessHandler(folder => {
-      hideLoading();
-      state.folders.push(folder);
-      renderFolderTabs();
-      selectFolder(folder.id);
-      showToast('フォルダを作成しました');
-    })
+    .withSuccessHandler(onFolderAdded('フォルダを作成しました'))
     .withFailureHandler(e => { hideLoading(); onError(e); })
     .createFolder(name);
 }
+
+// ─── First-run setup ──────────────────────────────────────────────────────────
+function showSetupScreen(isOwner) {
+  document.getElementById('setup-owner').classList.toggle('hidden', !isOwner);
+  document.getElementById('setup-nonowner').classList.toggle('hidden', !!isOwner);
+  const el = document.getElementById('setup-screen');
+  el.classList.remove('hidden');
+  el.classList.add('flex');
+}
+
+document.getElementById('setup-submit').addEventListener('click', () => {
+  const folderId = document.getElementById('setup-folder-id').value.trim();
+  showLoading('セットアップ中…');
+  google.script.run
+    .withSuccessHandler(() => {
+      const el = document.getElementById('setup-screen');
+      el.classList.add('hidden');
+      el.classList.remove('flex');
+      // The DB now exists; re-fetch the full app state to enter the workspace.
+      google.script.run.withSuccessHandler(onAppState).withFailureHandler(onError).getAppState();
+    })
+    .withFailureHandler(e => { hideLoading(); onError(e); })
+    .setupDb(folderId);
+});
 
 // ─── Members ──────────────────────────────────────────────────────────────────
 document.getElementById('members-btn').addEventListener('click', () => {
