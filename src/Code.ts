@@ -483,7 +483,11 @@ export function getDocumentList(folderId: string): MdDocument[] {
   requireMember();
   const driveFolderId = getDriveFolderId(folderId);
   const driveFolder = DriveApp.getFolderById(driveFolderId);
-  const files = driveFolder.getFilesByType("text/plain");
+  // Identify documents by the .md extension rather than by MIME type. Files we
+  // create are text/plain, but .md files uploaded into the folder externally are
+  // often registered by Drive as text/markdown, so a MIME filter would silently
+  // hide them. The .md name is the one trait both share.
+  const files = driveFolder.getFiles();
 
   const threadSheet = getSheet(SHEETS.THREADS);
   const threadRows = sheetData(threadSheet);
@@ -496,6 +500,7 @@ export function getDocumentList(folderId: string): MdDocument[] {
   const docs: MdDocument[] = [];
   while (files.hasNext()) {
     const file = files.next();
+    if (!/\.md$/i.test(file.getName())) continue;
     const id = file.getId();
     const openCount = threadRows.filter(
       (r) => r[THREAD_COLS.DOCUMENT_ID] === id && r[THREAD_COLS.STATUS] === "open"
@@ -505,7 +510,7 @@ export function getDocumentList(folderId: string): MdDocument[] {
     const statusId = meta && validStatusIds.has(meta.statusId) ? meta.statusId : defaultStatusId;
     docs.push({
       id,
-      name: file.getName().replace(/\.md$/, ""),
+      name: file.getName().replace(/\.md$/i, ""),
       folderId,
       folderName: driveFolder.getName(),
       lastUpdated: file.getLastUpdated().getTime(),
