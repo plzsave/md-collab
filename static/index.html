@@ -351,20 +351,28 @@
 <div id="ai-settings-modal" class="fixed inset-0 bg-black/40 z-50 hidden items-center justify-center">
   <div class="bg-white dark:bg-gray-800 rounded-xl shadow-xl w-full max-w-md mx-4 fade-in">
     <div class="p-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
-      <p class="text-sm font-semibold text-gray-700 dark:text-gray-300">AIレビュー設定 (Gemini)</p>
+      <p class="text-sm font-semibold text-gray-700 dark:text-gray-300">AIレビュー設定</p>
       <button id="ai-settings-close" class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200">✕</button>
     </div>
     <div class="p-4 space-y-3">
       <div>
-        <label class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Gemini API キー</label>
+        <label class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">プロバイダ</label>
+        <select id="ai-provider-select" class="w-full border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-2 text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-violet-500">
+          <option value="claude">Claude (Anthropic)</option>
+          <option value="openai">OpenAI</option>
+          <option value="gemini">Gemini (Google)</option>
+        </select>
+      </div>
+      <div>
+        <label id="ai-key-label" class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">API キー</label>
         <input id="ai-key-input" type="password" autocomplete="off" placeholder="未登録" class="w-full border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-2 text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-violet-500">
         <p id="ai-key-status" class="text-xs text-gray-400 mt-1"></p>
-        <p class="text-xs text-gray-400 mt-1"><a href="https://aistudio.google.com/apikey" target="_blank" class="text-violet-600 dark:text-violet-400 hover:underline">Google AI Studio</a> でキーを取得できます。キーはあなた専用に保存され、他のメンバーには共有されません。</p>
+        <p id="ai-key-help" class="text-xs text-gray-400 mt-1"></p>
       </div>
       <div>
         <label class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">モデル</label>
-        <input id="ai-model-input" type="text" placeholder="gemini-2.5-flash" class="w-full border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-2 text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-violet-500">
-        <p class="text-xs text-gray-400 mt-1">利用したい Gemini モデル名を入力します（例: gemini-2.5-flash, gemini-2.5-pro）。</p>
+        <input id="ai-model-input" type="text" class="w-full border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-2 text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-violet-500">
+        <p id="ai-model-help" class="text-xs text-gray-400 mt-1"></p>
       </div>
     </div>
     <div class="p-3 border-t border-gray-200 dark:border-gray-700 flex justify-between gap-2">
@@ -460,8 +468,9 @@ const state = {
   threads: [],
   members: [],
   unreadCount: 0,
-  hasAiKey: false,      // whether the current user registered a Gemini key
-  aiModel: '',          // the user's chosen Gemini model
+  hasAiKey: false,      // whether the active provider has a key (drives the review-button gate)
+  aiProvider: 'claude', // the user's selected provider
+  aiProviders: {},      // per-provider { hasKey, model }, loaded from getAiSettings
   filterMode: 'open',   // 'open' | 'all'
   pendingAnchor: null,  // { selectedText, contextBefore, contextAfter }
   pendingReplyThreadId: null,
@@ -1839,25 +1848,60 @@ function updateNotifBadge() {
   }
 }
 
-// ─── AI review (Gemini) ─────────────────────────────────────────────────────────
+// ─── AI review (multi-provider) ──────────────────────────────────────────────────
+const AI_PROVIDER_META = {
+  claude: {
+    label: 'Claude',
+    keyUrl: 'https://console.anthropic.com/settings/keys',
+    keyUrlLabel: 'Anthropic Console',
+    modelHelp: '利用したい Claude モデル名（例: claude-opus-4-8, claude-sonnet-4-6, claude-haiku-4-5）。',
+  },
+  openai: {
+    label: 'OpenAI',
+    keyUrl: 'https://platform.openai.com/api-keys',
+    keyUrlLabel: 'OpenAI Platform',
+    modelHelp: '利用したい OpenAI モデル名を入力します（モデル名は変わりうるので最新の提供モデルをご確認ください）。',
+  },
+  gemini: {
+    label: 'Gemini',
+    keyUrl: 'https://aistudio.google.com/apikey',
+    keyUrlLabel: 'Google AI Studio',
+    modelHelp: '利用したい Gemini モデル名（例: gemini-2.5-flash, gemini-2.5-pro）。無料枠のキーは入力が学習に使われる場合があります。',
+  },
+};
+
 document.getElementById('ai-settings-btn').addEventListener('click', openAiSettings);
 document.getElementById('ai-settings-close').addEventListener('click', () => hideModal('ai-settings-modal'));
 document.getElementById('ai-settings-cancel').addEventListener('click', () => hideModal('ai-settings-modal'));
+document.getElementById('ai-provider-select').addEventListener('change', e => applyProviderToForm(e.target.value));
+
+// Fill the key/model fields and help text from the loaded per-provider settings.
+function applyProviderToForm(provider) {
+  const meta = AI_PROVIDER_META[provider] || AI_PROVIDER_META.claude;
+  const info = (state.aiProviders && state.aiProviders[provider]) || { hasKey: false, model: '' };
+  document.getElementById('ai-key-label').textContent = meta.label + ' API キー';
+  document.getElementById('ai-key-input').value = '';
+  document.getElementById('ai-model-input').value = info.model || '';
+  document.getElementById('ai-key-status').textContent = info.hasKey
+    ? '✓ キーは登録済みです（変更する場合のみ入力）'
+    : '⚠ キーが未登録です';
+  document.getElementById('ai-key-help').innerHTML =
+    '<a href="' + meta.keyUrl + '" target="_blank" class="text-violet-600 dark:text-violet-400 hover:underline">' + meta.keyUrlLabel + '</a>'
+    + ' でキーを取得できます。キーはあなた専用に保存され、他のメンバーには共有されません。';
+  document.getElementById('ai-model-help').textContent = meta.modelHelp;
+}
 
 function openAiSettings() {
-  const keyInput = document.getElementById('ai-key-input');
-  const modelInput = document.getElementById('ai-model-input');
   const status = document.getElementById('ai-key-status');
-  keyInput.value = '';
-  modelInput.value = '';
   status.textContent = '読み込み中…';
   showModal('ai-settings-modal');
   google.script.run
     .withSuccessHandler(s => {
-      state.hasAiKey = !!s.hasKey;
-      state.aiModel = s.model || '';
-      modelInput.value = s.model || '';
-      status.textContent = s.hasKey ? '✓ キーは登録済みです（変更する場合のみ入力）' : '⚠ キーが未登録です';
+      state.aiProvider = s.provider || 'claude';
+      state.aiProviders = s.providers || {};
+      state.hasAiKey = !!(state.aiProviders[state.aiProvider] && state.aiProviders[state.aiProvider].hasKey);
+      document.getElementById('ai-provider-select').value = state.aiProvider;
+      applyProviderToForm(state.aiProvider);
     })
     .withFailureHandler(e => { status.textContent = ''; onError(e); })
     .getAiSettings();
@@ -1865,6 +1909,7 @@ function openAiSettings() {
 
 document.getElementById('ai-settings-save').addEventListener('click', () => {
   const btn = document.getElementById('ai-settings-save');
+  const provider = document.getElementById('ai-provider-select').value;
   const key = document.getElementById('ai-key-input').value.trim();
   const model = document.getElementById('ai-model-input').value.trim();
   btn.disabled = true;
@@ -1873,32 +1918,35 @@ document.getElementById('ai-settings-save').addEventListener('click', () => {
     .withSuccessHandler(s => {
       btn.disabled = false;
       btn.textContent = '保存';
-      state.hasAiKey = !!s.hasKey;
-      state.aiModel = s.model || '';
+      state.aiProvider = s.provider || 'claude';
+      state.aiProviders = s.providers || {};
+      state.hasAiKey = !!(state.aiProviders[state.aiProvider] && state.aiProviders[state.aiProvider].hasKey);
       hideModal('ai-settings-modal');
       showToast('AI設定を保存しました');
     })
     .withFailureHandler(e => { btn.disabled = false; btn.textContent = '保存'; onError(e); })
-    .saveAiSettings(key, model);
+    .saveAiSettings(provider, key, model);
 });
 
 document.getElementById('ai-key-clear-btn').addEventListener('click', () => {
-  if (!confirm('登録した Gemini APIキーを削除しますか？')) return;
+  const provider = document.getElementById('ai-provider-select').value;
+  const meta = AI_PROVIDER_META[provider] || AI_PROVIDER_META.claude;
+  if (!confirm('登録した ' + meta.label + ' APIキーを削除しますか？')) return;
   google.script.run
-    .withSuccessHandler(() => {
-      state.hasAiKey = false;
-      document.getElementById('ai-key-status').textContent = '⚠ キーが未登録です';
-      document.getElementById('ai-key-input').value = '';
+    .withSuccessHandler(s => {
+      state.aiProviders = s.providers || {};
+      state.hasAiKey = !!(state.aiProviders[state.aiProvider] && state.aiProviders[state.aiProvider].hasKey);
+      applyProviderToForm(provider);
       showToast('APIキーを削除しました');
     })
     .withFailureHandler(onError)
-    .clearAiKey();
+    .clearAiKey(provider);
 });
 
 document.getElementById('ai-review-btn').addEventListener('click', () => {
   if (!state.currentDocId) return;
   if (!state.hasAiKey) {
-    showToast('先にAI設定でGemini APIキーを登録してください');
+    showToast('先にAI設定でAPIキーを登録してください');
     openAiSettings();
     return;
   }
@@ -1917,7 +1965,7 @@ function runAiReview() {
   if (!docId) return;
   rerun.disabled = true;
   rerun.textContent = 'レビュー中…';
-  body.innerHTML = '<div class="flex items-center justify-center py-10 text-sm text-gray-400">Geminiがレビュー中です…（数十秒かかることがあります）</div>';
+  body.innerHTML = '<div class="flex items-center justify-center py-10 text-sm text-gray-400">AIがレビュー中です…（数十秒かかることがあります）</div>';
   google.script.run
     .withSuccessHandler(res => {
       rerun.disabled = false;
