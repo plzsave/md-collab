@@ -987,6 +987,153 @@ function createResolveNotifications(
   );
 }
 
+// ─── AI review (Gemini) ────────────────────────────────────────────────────────
+//
+// Each member registers their own Gemini API key. Because the web app runs as the
+// deployer (executeAs USER_DEPLOYING), PropertiesService.getUserProperties() would
+// return the deployer's store for everyone — so per-user keys are namespaced by the
+// active user's email inside ScriptProperties instead. The key is never returned to
+// the client; only whether one is set. Document content is sent to Google's Gemini
+// API, so review is strictly opt-in (the user must register a key first).
+
+const GEMINI_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models";
+// Default model when the user hasn't picked one. Gemini model names change over
+// time, so the settings UI lets the user override this with any current model id.
+const DEFAULT_GEMINI_MODEL = "gemini-2.5-flash";
+// Guard against oversized payloads / runaway token use on very large documents.
+const MAX_REVIEW_CHARS = 100000;
+
+function aiKeyProp(email: string): string {
+  return `gemini:key:${email}`;
+}
+function aiModelProp(email: string): string {
+  return `gemini:model:${email}`;
+}
+
+/** Returns the active user's AI settings. Never includes the key itself. */
+export function getAiSettings(): { hasKey: boolean; model: string } {
+  const email = requireMember();
+  const props = PropertiesService.getScriptProperties();
+  return {
+    hasKey: !!props.getProperty(aiKeyProp(email)),
+    model: props.getProperty(aiModelProp(email)) || DEFAULT_GEMINI_MODEL,
+  };
+}
+
+/**
+ * Saves the active user's Gemini key and/or model. An empty `apiKey` keeps the
+ * existing key (so the user can change the model without re-entering the key).
+ */
+export function saveAiSettings(apiKey: string, model: string): { hasKey: boolean; model: string } {
+  const email = requireMember();
+  const props = PropertiesService.getScriptProperties();
+  const trimmedKey = String(apiKey || "").trim();
+  if (trimmedKey) props.setProperty(aiKeyProp(email), trimmedKey);
+  const trimmedModel = String(model || "").trim() || DEFAULT_GEMINI_MODEL;
+  props.setProperty(aiModelProp(email), trimmedModel);
+  return {
+    hasKey: !!props.getProperty(aiKeyProp(email)),
+    model: trimmedModel,
+  };
+}
+
+/** Removes the active user's stored Gemini key. */
+export function clearAiKey(): { hasKey: false } {
+  const email = requireMember();
+  PropertiesService.getScriptProperties().deleteProperty(aiKeyProp(email));
+  return { hasKey: false };
+}
+
+/**
+ * Sends a managed document's Markdown to Gemini and returns a review. `instructions`
+ * is optional extra guidance from the user (e.g. "API仕様の整合性を重点的に"). The key
+ * and model are read from the active user's stored settings.
+ */
+export function reviewDocument(fileId: string, instructions: string): { review: string } {
+  const email = requireMember();
+  const props = PropertiesService.getScriptProperties();
+  const apiKey = props.getProperty(aiKeyProp(email));
+  if (!apiKey) {
+    throw new Error("Gemini APIキーが登録されていません。設定から登録してください。");
+  }
+  const model = props.getProperty(aiModelProp(email)) || DEFAULT_GEMINI_MODEL;
+
+  const file = getManagedFile(fileId);
+  const name = file.getName().replace(/\.md$/, "");
+  let content = file.getBlob().getDataAsString("UTF-8");
+  let truncatedNote = "";
+  if (content.length > MAX_REVIEW_CHARS) {
+    content = content.substring(0, MAX_REVIEW_CHARS);
+    truncatedNote = "\n\n（注: ドキュメントが長いため先頭部分のみをレビュー対象にしています）";
+  }
+
+  const extra = String(instructions || "").trim();
+  const systemText =
+    "あなたは経験豊富な技術文書レビュアーです。与えられた Markdown ドキュメントをレビューし、" +
+    "日本語で簡潔かつ具体的に指摘してください。観点: (1) 構成と読みやすさ, (2) 内容の正確さ・矛盾, " +
+    "(3) 説明不足や曖昧な箇所, (4) 誤字脱字や表記ゆれ。" +
+    "出力は Markdown で、『要約』『良い点』『改善提案』の見出しに分け、改善提案は該当箇所が分かるよう引用してください。" +
+    (extra ? `\n\nレビュー依頼者からの追加指示: ${extra}` : "");
+
+  const userText = `# ドキュメント名: ${name}\n\n${content}${truncatedNote}`;
+
+  const payload = {
+    systemInstruction: { parts: [{ text: systemText }] },
+    contents: [{ role: "user", parts: [{ text: userText }] }],
+  };
+
+  let res: GoogleAppsScript.URL_Fetch.HTTPResponse;
+  try {
+    res = UrlFetchApp.fetch(`${GEMINI_ENDPOINT}/${encodeURIComponent(model)}:generateContent`, {
+      method: "post",
+      contentType: "application/json",
+      headers: { "x-goog-api-key": apiKey },
+      payload: JSON.stringify(payload),
+      muteHttpExceptions: true,
+    });
+  } catch (e) {
+    throw new Error("Gemini API への接続に失敗しました。");
+  }
+
+  const code = res.getResponseCode();
+  const body = res.getContentText();
+  if (code !== 200) {
+    // Surface the API's own error message when present; it's the most useful hint
+    // (bad key, unknown model, quota, etc.).
+    let detail = "";
+    try {
+      detail = JSON.parse(body)?.error?.message || "";
+    } catch (e) {
+      // body wasn't JSON; ignore
+    }
+    if (code === 400 || code === 403) {
+      throw new Error(`Gemini API エラー: ${detail || "APIキーまたはモデル名を確認してください。"}`);
+    }
+    if (code === 404) {
+      throw new Error(`モデル "${model}" が見つかりません。設定でモデル名を確認してください。`);
+    }
+    if (code === 429) {
+      throw new Error("Gemini API のレート上限に達しました。しばらくしてからお試しください。");
+    }
+    throw new Error(`Gemini API エラー (${code}): ${detail || "不明なエラー"}`);
+  }
+
+  let json: { candidates?: { content?: { parts?: { text?: string }[] } }[] };
+  try {
+    json = JSON.parse(body);
+  } catch (e) {
+    throw new Error("Gemini API のレスポンスを解析できませんでした。");
+  }
+  const review = (json.candidates?.[0]?.content?.parts ?? [])
+    .map((p) => p.text || "")
+    .join("")
+    .trim();
+  if (!review) {
+    throw new Error("レビュー結果が空でした。モデルやドキュメント内容をご確認ください。");
+  }
+  return { review };
+}
+
 // ─── App entry ───────────────────────────────────────────────────────────────
 
 export function getAppState(): AppState {
@@ -1003,6 +1150,7 @@ export function getAppState(): AppState {
       folders: [],
       statuses: [],
       unreadCount: 0,
+      hasAiKey: false,
     };
   }
   const members = getMembers();
@@ -1025,6 +1173,7 @@ export function getAppState(): AppState {
     folders,
     statuses,
     unreadCount,
+    hasAiKey: member ? !!PropertiesService.getScriptProperties().getProperty(aiKeyProp(user)) : false,
   };
 }
 
