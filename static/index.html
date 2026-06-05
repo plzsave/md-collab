@@ -49,6 +49,15 @@
   .md-body img { max-width: 100%; }
   .md-body hr { border: none; border-top: 1px solid #d0d7de; margin: 1.5em 0; }
   .dark .md-body hr { border-color: #30363d; }
+  .md-body .table-summary { margin: -.5em 0 1.5em; padding: .6em .9em; font-size: .9em; line-height: 1.6; background: #f6f8fa; border: 1px solid #d0d7de; border-left: 3px solid #0969da; border-radius: 6px; color: #24292e; }
+  .dark .md-body .table-summary { background: #161b22; border-color: #30363d; border-left-color: #58a6ff; color: #e6edf3; }
+  .md-body .table-summary-label { font-weight: 600; }
+  .md-body .table-summary-by { color: #57606a; }
+  .dark .md-body .table-summary-by { color: #8b949e; }
+  .md-body td.table-check-cell { text-align: center; }
+  .md-body .table-check { width: 16px; height: 16px; cursor: pointer; vertical-align: middle; accent-color: #0969da; }
+  .md-body .table-check:disabled { cursor: default; }
+  .dark .md-body .table-check { accent-color: #58a6ff; }
 
   /* Comment anchors */
   .comment-anchor {
@@ -1002,7 +1011,16 @@ function renderDocument(content, threads) {
 // method signatures, which change between major versions.
 function renderMarkdown(content) {
   marked.setOptions({ breaks: true, gfm: true });
-  const raw = marked.parse(content || '');
+  let src = content || '';
+  // A `<!-- summary -->` (or `<!-- 集計 -->`) marker on its own line right before a
+  // pipe table opts that table into the row-count summary (see buildTableSummary).
+  // Guarantee a blank line after the marker so the following table still parses as
+  // a table instead of being swallowed into the HTML-comment block.
+  src = src.replace(/^([ \t]*<!--\s*(?:summary|集計)\s*-->[ \t]*)\r?\n(?=[ \t]*\|)/gim, '$1\n\n');
+  let raw = marked.parse(src);
+  // DOMPurify strips HTML comments, so carry the opt-in onto the table element as a
+  // data attribute (data-* survives sanitization) before the comment is dropped.
+  raw = raw.replace(/<!--\s*(?:summary|集計)\s*-->\s*<table/gi, '<table data-summary="1"');
   return DOMPurify.sanitize(raw, { ADD_ATTR: ['target'] });
 }
 
@@ -1020,6 +1038,221 @@ function enhanceContent(container) {
     div.textContent = code.textContent;
     code.parentElement.replaceWith(div);
   });
+  // Tables opted in via the `<!-- summary -->` marker get interactive checkboxes
+  // (in the read-only view) plus a pass-rate summary block beneath them.
+  const interactive = container.id === 'doc-content';
+  container.querySelectorAll('table[data-summary]').forEach((table, idx) => {
+    table.dataset.summaryIndex = String(idx); // ordinal among summary tables = source order
+    renderSummaryCheckboxes(table, interactive);
+    if (table.dataset.summaryDone) return;
+    table.dataset.summaryDone = '1';
+    const summary = buildTableSummary(table);
+    if (summary) table.insertAdjacentElement('afterend', summary);
+  });
+}
+
+// ─── Table pass-rate summary ──────────────────────────────────────────────────
+// Header keywords that identify the status (pass/fail) column and an optional
+// grouping (assignee) column. Matching is case-insensitive and substring-based.
+const SUMMARY_STATUS_RE = /(結果|判定|ステータス|状態|合否|チェック|status|result|pass|\bok\b)/i;
+const SUMMARY_ASSIGNEE_RE = /(担当|責任|アサイン|assignee|owner)/i;
+
+// A cell counts as a pass when its text is one of the recognized "OK" tokens.
+function isPassCell(text) {
+  const t = (text || '').trim().toLowerCase().replace(/\s+/g, '');
+  return /^(ok|済|済み|合格|✓|✔|☑|\[x\])$/.test(t);
+}
+
+// Resolve the status column (and optional assignee column) from the header row.
+function getSummaryColumns(table) {
+  const headers = [...table.querySelectorAll('thead th')].map(th => th.textContent.trim());
+  let statusIdx = headers.findIndex(h => SUMMARY_STATUS_RE.test(h));
+  const statusByKeyword = statusIdx !== -1;
+  if (statusIdx === -1) statusIdx = headers.length - 1; // fall back to the last column
+  const assigneeIdx = headers.findIndex(h => SUMMARY_ASSIGNEE_RE.test(h));
+  return { headers, statusIdx, statusByKeyword, assigneeIdx };
+}
+
+// True/false pass state for one status cell: a rendered checkbox wins over text.
+function cellIsPass(cell) {
+  if (!cell) return false;
+  const box = cell.querySelector('input[type="checkbox"]');
+  return box ? box.checked : isPassCell(cell.textContent);
+}
+
+// Replace `[x]` / `[ ]` status cells (and, when the column is keyword-identified,
+// empty ones) with checkboxes. Only the read-only view wires up toggling; the live
+// preview and AI-review panes render them disabled so they read as plain status.
+function renderSummaryCheckboxes(table, interactive) {
+  const { statusIdx, statusByKeyword } = getSummaryColumns(table);
+  if (statusIdx < 0) return;
+  table.querySelectorAll('tbody tr').forEach(tr => {
+    const cell = tr.querySelectorAll('td')[statusIdx];
+    if (!cell || cell.querySelector('input')) return;
+    const raw = cell.textContent.trim();
+    const m = /^\[([ xX])\]$/.exec(raw);
+    let checked;
+    if (m) checked = m[1].toLowerCase() === 'x';
+    else if (raw === '' && statusByKeyword) checked = false;
+    else return; // leave text values (OK / ✓ / 済 …) as-is
+    const input = document.createElement('input');
+    input.type = 'checkbox';
+    input.className = 'table-check';
+    input.checked = checked;
+    input.dataset.col = String(statusIdx);
+    if (interactive) input.addEventListener('change', () => toggleTableCheckbox(input));
+    else input.disabled = true;
+    cell.textContent = '';
+    cell.classList.add('table-check-cell');
+    cell.appendChild(input);
+  });
+}
+
+function buildTableSummary(table) {
+  const { statusIdx, assigneeIdx } = getSummaryColumns(table);
+  if (!table.querySelector('thead th')) return null;
+
+  let total = 0, pass = 0;
+  const groups = new Map(); // assignee label -> { total, pass } (insertion order preserved)
+  table.querySelectorAll('tbody tr').forEach(tr => {
+    const cells = tr.querySelectorAll('td');
+    if (!cells.length) return;
+    total++;
+    const ok = cellIsPass(cells[statusIdx]) ? 1 : 0;
+    pass += ok;
+    if (assigneeIdx >= 0) {
+      const who = (cells[assigneeIdx] ? cells[assigneeIdx].textContent.trim() : '') || '(未割当)';
+      const g = groups.get(who) || { total: 0, pass: 0 };
+      g.total++; g.pass += ok;
+      groups.set(who, g);
+    }
+  });
+  if (total === 0) return null;
+
+  const pct = (p, t) => {
+    const v = t ? (p / t) * 100 : 0;
+    return Number.isInteger(v) ? String(v) : v.toFixed(1);
+  };
+  const fmt = (p, t) => `${p}/${t} 件 (${pct(p, t)}%)`;
+
+  const div = document.createElement('div');
+  div.className = 'table-summary';
+  const lines = [`<span class="table-summary-label">全体:</span> ${fmt(pass, total)}`];
+  if (groups.size) {
+    const parts = [...groups.entries()].map(([who, g]) => `${escapeHtml(who)}: ${fmt(g.pass, g.total)}`);
+    lines.push(`<span class="table-summary-by">担当者別 — ${parts.join(' ／ ')}</span>`);
+  }
+  div.innerHTML = lines.join('<br>');
+  return div;
+}
+
+// Rebuild the summary block directly under a table (used after a live toggle).
+function refreshTableSummary(table) {
+  const next = table.nextElementSibling;
+  if (next && next.classList.contains('table-summary')) next.remove();
+  const summary = buildTableSummary(table);
+  if (summary) table.insertAdjacentElement('afterend', summary);
+}
+
+// Locate the body-row line ranges of each `<!-- summary -->` table in the source,
+// in document order (so the Nth entry lines up with the Nth table[data-summary]).
+function locateSummaryTables(lines) {
+  const markerRe = /^[ \t]*<!--\s*(?:summary|集計)\s*-->[ \t]*$/i;
+  const rowRe = /^[ \t]*\|.*\|[ \t]*$/;
+  const isDelim = l => rowRe.test(l) && /^[\s|:\-]+$/.test(l) && l.includes('-');
+  const tables = [];
+  for (let i = 0; i < lines.length; i++) {
+    if (!markerRe.test(lines[i])) continue;
+    let j = i + 1;
+    while (j < lines.length && lines[j].trim() === '') j++;          // skip blank lines
+    if (j >= lines.length || !rowRe.test(lines[j])) continue;         // header row
+    if (j + 1 >= lines.length || !isDelim(lines[j + 1])) continue;    // delimiter row
+    let k = j + 2;
+    const bodyStart = k;
+    while (k < lines.length && rowRe.test(lines[k]) && !isDelim(lines[k])) k++;
+    tables.push({ bodyStart, bodyEnd: k });
+  }
+  return tables;
+}
+
+// Toggle the bracket token of inner cell `colIndex` (0-based) on a table-row line,
+// rewriting only that cell so the rest of the row's formatting is preserved.
+function toggleCellInLine(line, colIndex, makeChecked) {
+  const pieces = line.split('|'); // rows have leading+trailing pipes → inner cell k is pieces[k+1]
+  const target = colIndex + 1;
+  if (target < 1 || target >= pieces.length - 1) return null;
+  const cell = pieces[target];
+  const token = makeChecked ? '[x]' : '[ ]';
+  if (/\[[ xX]\]/.test(cell)) pieces[target] = cell.replace(/\[[ xX]\]/, token);
+  else if (cell.trim() === '') pieces[target] = ' ' + token + ' ';
+  else return null;
+  return pieces.join('|');
+}
+
+// Persist a checkbox toggle from the read-only view by editing just the one source
+// cell. The new content is applied to state optimistically so that rapid successive
+// toggles compose on top of each other instead of each racing from stale content;
+// the actual save is serialized + coalesced (see saveCheckboxEdits).
+let cbSaving = false;  // an updateDocument round-trip is in flight
+let cbPending = false; // more toggles landed during the in-flight save
+function toggleTableCheckbox(input) {
+  const checked = input.checked;
+  const table = input.closest('table[data-summary]');
+  const tr = input.closest('tr');
+  const tableOrdinal = Number(table.dataset.summaryIndex);
+  const rowIndex = [...table.querySelectorAll('tbody tr')].indexOf(tr);
+  const colIndex = Number(input.dataset.col);
+  refreshTableSummary(table); // optimistic: reflect the new count immediately
+
+  const lines = (state.currentDocContent || '').split('\n');
+  const t = locateSummaryTables(lines)[tableOrdinal];
+  const lineNo = t ? t.bodyStart + rowIndex : -1;
+  const updated = (t && rowIndex >= 0 && lineNo < t.bodyEnd)
+    ? toggleCellInLine(lines[lineNo], colIndex, checked)
+    : null;
+  if (updated == null) {
+    // DOM/source desync — practically unreachable. Undo the box and warn.
+    input.checked = !checked;
+    refreshTableSummary(table);
+    console.warn('table-summary: could not map checkbox to a source cell');
+    showToast('チェック位置を特定できませんでした');
+    return;
+  }
+  lines[lineNo] = updated;
+  state.currentDocContent = lines.join('\n'); // next toggle builds on this
+  saveCheckboxEdits();
+}
+
+// Serialize + coalesce checkbox saves: keep at most one request in flight, and
+// since every save ships the whole document, collapse any toggles that pile up
+// during the round-trip into a single follow-up save of the latest content.
+function saveCheckboxEdits() {
+  if (cbSaving) { cbPending = true; return; }
+  cbSaving = true;
+  cbPending = false;
+  const content = state.currentDocContent;
+  const docId = state.currentDocId;
+  const docName = state.currentDocName;
+  google.script.run
+    .withSuccessHandler(newLastUpdated => {
+      state.currentDocLastUpdated = newLastUpdated || Date.now();
+      cbSaving = false;
+      if (cbPending) saveCheckboxEdits(); // flush toggles that arrived mid-flight
+    })
+    .withFailureHandler(e => {
+      cbSaving = false;
+      cbPending = false;
+      // The optimistic DOM/state may now diverge from the server, so re-sync by
+      // reloading the authoritative document. This also covers a real CONFLICT
+      // from another user editing the same doc concurrently.
+      const msg = String((e && e.message) || e);
+      showToast(msg.indexOf('CONFLICT') !== -1
+        ? '他のユーザーが更新しました。再読み込みします'
+        : 'エラー: ' + msg);
+      console.error(e);
+      openDocument(docId, docName);
+    })
+    .updateDocument(docId, content, state.currentDocLastUpdated || 0);
 }
 
 async function renderMermaidBlocks() {
