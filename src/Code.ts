@@ -1228,6 +1228,69 @@ function reviewWithGemini(apiKey: string, model: string, systemText: string, use
     .trim();
 }
 
+// ─── Model discovery ─────────────────────────────────────────────────────────
+//
+// Each provider exposes a "list models" endpoint. We surface the result as
+// suggestions in the settings UI so users can pick a currently-valid model id
+// instead of guessing — model names change over time, so this is fetched live
+// with the user's own key rather than hardcoded.
+
+/** Lists chat-capable model ids the active user's stored key can use for `provider`. */
+export function listAiModels(provider: string): string[] {
+  const email = requireMember();
+  const p = toProvider(provider);
+  const apiKey = PropertiesService.getScriptProperties().getProperty(aiKeyProp(p, email));
+  if (!apiKey) {
+    throw new Error("先に該当プロバイダのAPIキーを保存してください。");
+  }
+  if (p === "claude") return listClaudeModels(apiKey);
+  if (p === "openai") return listOpenAiModels(apiKey);
+  return listGeminiModels(apiKey);
+}
+
+function listClaudeModels(apiKey: string): string[] {
+  const { code, body } = fetchJson("Claude", "https://api.anthropic.com/v1/models?limit=1000", {
+    method: "get",
+    headers: { "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
+    muteHttpExceptions: true,
+  });
+  if (code !== 200) throw aiHttpError("Claude", code, "", extractApiError(body));
+  const json = JSON.parse(body) as { data?: { id?: string }[] };
+  return (json.data ?? []).map((m) => m.id || "").filter(Boolean);
+}
+
+function listOpenAiModels(apiKey: string): string[] {
+  const { code, body } = fetchJson("OpenAI", "https://api.openai.com/v1/models", {
+    method: "get",
+    headers: { Authorization: `Bearer ${apiKey}` },
+    muteHttpExceptions: true,
+  });
+  if (code !== 200) throw aiHttpError("OpenAI", code, "", extractApiError(body));
+  const json = JSON.parse(body) as { data?: { id?: string }[] };
+  // Best-effort filter to chat-capable models — the list also includes embedding,
+  // tts, whisper, moderation, and image models that can't do chat completions.
+  return (json.data ?? [])
+    .map((m) => m.id || "")
+    .filter((id) => /^(gpt|o\d|chatgpt)/i.test(id))
+    .sort();
+}
+
+function listGeminiModels(apiKey: string): string[] {
+  const { code, body } = fetchJson("Gemini", "https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000", {
+    method: "get",
+    headers: { "x-goog-api-key": apiKey },
+    muteHttpExceptions: true,
+  });
+  if (code !== 200) throw aiHttpError("Gemini", code, "", extractApiError(body));
+  const json = JSON.parse(body) as { models?: { name?: string; supportedGenerationMethods?: string[] }[] };
+  // Keep only models that support generateContent (what reviewWithGemini calls),
+  // and strip the "models/" prefix so the value matches what the UI expects.
+  return (json.models ?? [])
+    .filter((m) => (m.supportedGenerationMethods || []).indexOf("generateContent") !== -1)
+    .map((m) => (m.name || "").replace(/^models\//, ""))
+    .filter(Boolean);
+}
+
 /**
  * Sends a managed document's Markdown to the user's chosen provider and returns a
  * review. `instructions` is optional extra guidance from the user (e.g. "API仕様の整合性を

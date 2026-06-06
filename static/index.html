@@ -380,7 +380,11 @@
       </div>
       <div>
         <label class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">モデル</label>
-        <input id="ai-model-input" type="text" class="w-full border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-2 text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-violet-500">
+        <div class="flex gap-2">
+          <input id="ai-model-input" type="text" list="ai-model-list" class="flex-1 border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-2 text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-violet-500">
+          <datalist id="ai-model-list"></datalist>
+          <button id="ai-model-fetch-btn" type="button" class="text-xs px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 whitespace-nowrap">取得</button>
+        </div>
         <p id="ai-model-help" class="text-xs text-gray-400 mt-1"></p>
       </div>
     </div>
@@ -2102,6 +2106,33 @@ document.getElementById('ai-settings-close').addEventListener('click', () => hid
 document.getElementById('ai-settings-cancel').addEventListener('click', () => hideModal('ai-settings-modal'));
 document.getElementById('ai-provider-select').addEventListener('change', e => applyProviderToForm(e.target.value));
 
+// Fetch the selected provider's usable models (with the stored key) and offer them
+// as <datalist> suggestions. The input stays free-text — model ids change over time,
+// so this assists rather than constrains.
+document.getElementById('ai-model-fetch-btn').addEventListener('click', () => {
+  const provider = document.getElementById('ai-provider-select').value;
+  const info = (state.aiProviders && state.aiProviders[provider]) || { hasKey: false };
+  if (!info.hasKey) { showToast('先にこのプロバイダのキーを保存してください'); return; }
+  const btn = document.getElementById('ai-model-fetch-btn');
+  btn.disabled = true;
+  btn.textContent = '取得中…';
+  google.script.run
+    .withSuccessHandler(models => {
+      btn.disabled = false;
+      btn.textContent = '取得';
+      const dl = document.getElementById('ai-model-list');
+      dl.innerHTML = '';
+      (models || []).forEach(id => {
+        const opt = document.createElement('option');
+        opt.value = id;
+        dl.appendChild(opt);
+      });
+      showToast(models && models.length ? `${models.length} 件のモデルを取得しました` : '利用可能なモデルが見つかりませんでした');
+    })
+    .withFailureHandler(e => { btn.disabled = false; btn.textContent = '取得'; onError(e); })
+    .listAiModels(provider);
+});
+
 // Fill the key/model fields and help text from the loaded per-provider settings.
 function applyProviderToForm(provider) {
   const meta = AI_PROVIDER_META[provider] || AI_PROVIDER_META.claude;
@@ -2109,6 +2140,7 @@ function applyProviderToForm(provider) {
   document.getElementById('ai-key-label').textContent = meta.label + ' API キー';
   document.getElementById('ai-key-input').value = '';
   document.getElementById('ai-model-input').value = info.model || '';
+  document.getElementById('ai-model-list').innerHTML = ''; // suggestions are provider-specific
   document.getElementById('ai-key-status').textContent = info.hasKey
     ? '✓ キーは登録済みです（変更する場合のみ入力）'
     : '⚠ キーが未登録です';
