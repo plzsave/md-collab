@@ -31,4 +31,8 @@ export {
   getNotifications,
   markNotificationRead,
   markAllNotificationsRead,
+  getAiSettings,
+  saveAiSettings,
+  clearAiKey,
+  reviewDocument,
 } from "./Code";

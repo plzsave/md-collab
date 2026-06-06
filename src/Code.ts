@@ -987,6 +987,276 @@ function createResolveNotifications(
   );
 }
 
+// ─── AI review (multi-provider) ──────────────────────────────────────────────────
+//
+// Reviews go through one of several LLM providers (Claude / OpenAI / Gemini), chosen
+// per user. Each member registers their own API key per provider. Because the web app
+// runs as the deployer (executeAs USER_DEPLOYING), PropertiesService.getUserProperties()
+// would return the deployer's store for everyone — so per-user, per-provider keys are
+// namespaced by the active user's email inside ScriptProperties instead. Keys are never
+// returned to the client; only whether one is set. Document content is sent to the chosen
+// provider's API, so review is strictly opt-in (the user must register a key first).
+
+type AiProvider = "claude" | "openai" | "gemini";
+const AI_PROVIDERS: AiProvider[] = ["claude", "openai", "gemini"];
+const DEFAULT_AI_PROVIDER: AiProvider = "claude";
+
+// Default model per provider when the user hasn't picked one. Model names change over
+// time, so the settings UI lets the user override these with any current model id.
+// (Claude default follows Anthropic's current flagship; OpenAI/Gemini defaults are
+// starting points the user is expected to confirm against each provider's model list.)
+const DEFAULT_MODELS: { [p in AiProvider]: string } = {
+  claude: "claude-opus-4-8",
+  openai: "gpt-4o",
+  gemini: "gemini-2.5-flash",
+};
+
+// Guard against oversized payloads / runaway token use on very large documents.
+const MAX_REVIEW_CHARS = 100000;
+
+function toProvider(value: unknown): AiProvider {
+  const v = String(value || "");
+  return (AI_PROVIDERS as string[]).includes(v) ? (v as AiProvider) : DEFAULT_AI_PROVIDER;
+}
+
+function aiProviderProp(email: string): string {
+  return `ai:provider:${email}`;
+}
+function aiKeyProp(provider: AiProvider, email: string): string {
+  return `ai:key:${provider}:${email}`;
+}
+function aiModelProp(provider: AiProvider, email: string): string {
+  return `ai:model:${provider}:${email}`;
+}
+
+interface AiSettings {
+  provider: AiProvider;
+  // Per-provider key presence + model, so the settings UI can show every provider's
+  // state and the user can keep keys registered for more than one at a time.
+  providers: { [p in AiProvider]: { hasKey: boolean; model: string } };
+}
+
+/** Returns the active user's AI settings. Never includes any key itself. */
+export function getAiSettings(): AiSettings {
+  const email = requireMember();
+  const props = PropertiesService.getScriptProperties();
+  const providers = {} as AiSettings["providers"];
+  for (const p of AI_PROVIDERS) {
+    providers[p] = {
+      hasKey: !!props.getProperty(aiKeyProp(p, email)),
+      model: props.getProperty(aiModelProp(p, email)) || DEFAULT_MODELS[p],
+    };
+  }
+  return {
+    provider: toProvider(props.getProperty(aiProviderProp(email))),
+    providers,
+  };
+}
+
+/**
+ * Saves the active provider and that provider's key/model. An empty `apiKey` keeps the
+ * existing key (so the user can change the model or switch providers without re-entering
+ * a key). Keys for other providers are left untouched.
+ */
+export function saveAiSettings(provider: string, apiKey: string, model: string): AiSettings {
+  const email = requireMember();
+  const p = toProvider(provider);
+  const props = PropertiesService.getScriptProperties();
+  props.setProperty(aiProviderProp(email), p);
+  const trimmedKey = String(apiKey || "").trim();
+  if (trimmedKey) props.setProperty(aiKeyProp(p, email), trimmedKey);
+  props.setProperty(aiModelProp(p, email), String(model || "").trim() || DEFAULT_MODELS[p]);
+  return getAiSettings();
+}
+
+/** Removes the active user's stored key for one provider. */
+export function clearAiKey(provider: string): AiSettings {
+  const email = requireMember();
+  PropertiesService.getScriptProperties().deleteProperty(aiKeyProp(toProvider(provider), email));
+  return getAiSettings();
+}
+
+/** Whether the active user's currently-selected provider has a key (drives the UI gate). */
+function hasActiveAiKey(email: string): boolean {
+  const props = PropertiesService.getScriptProperties();
+  const provider = toProvider(props.getProperty(aiProviderProp(email)));
+  return !!props.getProperty(aiKeyProp(provider, email));
+}
+
+/** Map a provider's HTTP error to an actionable Japanese message. `detail` is the API's own message. */
+function aiHttpError(label: string, code: number, model: string, detail: string): Error {
+  if (code === 400 || code === 401 || code === 403) {
+    return new Error(`${label} API エラー: ${detail || "APIキーまたはモデル名を確認してください。"}`);
+  }
+  if (code === 404) {
+    return new Error(`モデル "${model}" が見つかりません。設定でモデル名を確認してください。`);
+  }
+  if (code === 413) {
+    return new Error(`${label} API: ドキュメントが大きすぎます。内容を分割してお試しください。`);
+  }
+  if (code === 429) {
+    return new Error(`${label} API のレート上限に達しました。しばらくしてからお試しください。`);
+  }
+  return new Error(`${label} API エラー (${code}): ${detail || "不明なエラー"}`);
+}
+
+/** Best-effort extraction of a provider's own error message from a JSON body. */
+function extractApiError(body: string): string {
+  try {
+    return JSON.parse(body)?.error?.message || "";
+  } catch (e) {
+    return "";
+  }
+}
+
+function fetchJson(label: string, url: string, options: GoogleAppsScript.URL_Fetch.URLFetchRequestOptions): { code: number; body: string } {
+  let res: GoogleAppsScript.URL_Fetch.HTTPResponse;
+  try {
+    res = UrlFetchApp.fetch(url, options);
+  } catch (e) {
+    throw new Error(`${label} API への接続に失敗しました。`);
+  }
+  return { code: res.getResponseCode(), body: res.getContentText() };
+}
+
+// Anthropic Messages API. The stable reviewer instructions go in `system` (with a
+// cache_control breakpoint so they can be cached across reviews); the per-review
+// document + extra instructions go in the user turn, keeping the cacheable prefix
+// byte-stable. Caching only actually engages once the cached prefix exceeds the
+// model's minimum (~4096 tokens for Opus), so for a short system prompt this is a
+// no-op today — it pays off only if the reviewer prompt grows large.
+function reviewWithClaude(apiKey: string, model: string, systemText: string, userText: string): string {
+  const { code, body } = fetchJson("Claude", "https://api.anthropic.com/v1/messages", {
+    method: "post",
+    contentType: "application/json",
+    headers: { "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
+    payload: JSON.stringify({
+      model,
+      max_tokens: 8192,
+      system: [{ type: "text", text: systemText, cache_control: { type: "ephemeral" } }],
+      messages: [{ role: "user", content: userText }],
+    }),
+    muteHttpExceptions: true,
+  });
+  if (code !== 200) throw aiHttpError("Claude", code, model, extractApiError(body));
+  let json: { content?: { type?: string; text?: string }[] };
+  try {
+    json = JSON.parse(body);
+  } catch (e) {
+    throw new Error("Claude API のレスポンスを解析できませんでした。");
+  }
+  return (json.content ?? [])
+    .filter((b) => b.type === "text")
+    .map((b) => b.text || "")
+    .join("")
+    .trim();
+}
+
+// OpenAI Chat Completions. Body is kept minimal (model + messages) so it stays
+// compatible across model families that differ on optional parameters.
+function reviewWithOpenAI(apiKey: string, model: string, systemText: string, userText: string): string {
+  const { code, body } = fetchJson("OpenAI", "https://api.openai.com/v1/chat/completions", {
+    method: "post",
+    contentType: "application/json",
+    headers: { Authorization: `Bearer ${apiKey}` },
+    payload: JSON.stringify({
+      model,
+      messages: [
+        { role: "system", content: systemText },
+        { role: "user", content: userText },
+      ],
+    }),
+    muteHttpExceptions: true,
+  });
+  if (code !== 200) throw aiHttpError("OpenAI", code, model, extractApiError(body));
+  let json: { choices?: { message?: { content?: string } }[] };
+  try {
+    json = JSON.parse(body);
+  } catch (e) {
+    throw new Error("OpenAI API のレスポンスを解析できませんでした。");
+  }
+  return (json.choices?.[0]?.message?.content || "").trim();
+}
+
+// Google Gemini generateContent.
+function reviewWithGemini(apiKey: string, model: string, systemText: string, userText: string): string {
+  const endpoint = "https://generativelanguage.googleapis.com/v1beta/models";
+  const { code, body } = fetchJson("Gemini", `${endpoint}/${encodeURIComponent(model)}:generateContent`, {
+    method: "post",
+    contentType: "application/json",
+    headers: { "x-goog-api-key": apiKey },
+    payload: JSON.stringify({
+      systemInstruction: { parts: [{ text: systemText }] },
+      contents: [{ role: "user", parts: [{ text: userText }] }],
+    }),
+    muteHttpExceptions: true,
+  });
+  if (code !== 200) throw aiHttpError("Gemini", code, model, extractApiError(body));
+  let json: { candidates?: { content?: { parts?: { text?: string }[] } }[] };
+  try {
+    json = JSON.parse(body);
+  } catch (e) {
+    throw new Error("Gemini API のレスポンスを解析できませんでした。");
+  }
+  return (json.candidates?.[0]?.content?.parts ?? [])
+    .map((p) => p.text || "")
+    .join("")
+    .trim();
+}
+
+/**
+ * Sends a managed document's Markdown to the user's chosen provider and returns a
+ * review. `instructions` is optional extra guidance from the user (e.g. "API仕様の整合性を
+ * 重点的に"). The provider, key, and model are read from the active user's stored settings.
+ */
+export function reviewDocument(fileId: string, instructions: string): { review: string } {
+  const email = requireMember();
+  const props = PropertiesService.getScriptProperties();
+  const provider = toProvider(props.getProperty(aiProviderProp(email)));
+  const apiKey = props.getProperty(aiKeyProp(provider, email));
+  if (!apiKey) {
+    throw new Error("APIキーが登録されていません。設定から登録してください。");
+  }
+  const model = props.getProperty(aiModelProp(provider, email)) || DEFAULT_MODELS[provider];
+
+  const file = getManagedFile(fileId);
+  const name = file.getName().replace(/\.md$/i, "");
+  let content = file.getBlob().getDataAsString("UTF-8");
+  let truncatedNote = "";
+  if (content.length > MAX_REVIEW_CHARS) {
+    content = content.substring(0, MAX_REVIEW_CHARS);
+    truncatedNote = "\n\n（注: ドキュメントが長いため先頭部分のみをレビュー対象にしています）";
+  }
+
+  // Stable reviewer instructions — identical for every review so the prefix can cache.
+  const systemText =
+    "あなたは経験豊富な技術文書レビュアーです。与えられた Markdown ドキュメントをレビューし、" +
+    "日本語で簡潔かつ具体的に指摘してください。観点: (1) 構成と読みやすさ, (2) 内容の正確さ・矛盾, " +
+    "(3) 説明不足や曖昧な箇所, (4) 誤字脱字や表記ゆれ。" +
+    "出力は Markdown で、『要約』『良い点』『改善提案』の見出しに分け、改善提案は該当箇所が分かるよう引用してください。";
+
+  // Per-review content lives in the user turn (the volatile part), so the system
+  // prefix stays byte-stable across reviews.
+  const extra = String(instructions || "").trim();
+  const userText =
+    (extra ? `レビュー依頼者からの追加指示: ${extra}\n\n` : "") +
+    `# ドキュメント名: ${name}\n\n${content}${truncatedNote}`;
+
+  let review: string;
+  if (provider === "claude") {
+    review = reviewWithClaude(apiKey, model, systemText, userText);
+  } else if (provider === "openai") {
+    review = reviewWithOpenAI(apiKey, model, systemText, userText);
+  } else {
+    review = reviewWithGemini(apiKey, model, systemText, userText);
+  }
+
+  if (!review) {
+    throw new Error("レビュー結果が空でした。モデルやドキュメント内容をご確認ください。");
+  }
+  return { review };
+}
+
 // ─── App entry ───────────────────────────────────────────────────────────────
 
 export function getAppState(): AppState {
@@ -1003,6 +1273,7 @@ export function getAppState(): AppState {
       folders: [],
       statuses: [],
       unreadCount: 0,
+      hasAiKey: false,
     };
   }
   const members = getMembers();
@@ -1025,6 +1296,7 @@ export function getAppState(): AppState {
     folders,
     statuses,
     unreadCount,
+    hasAiKey: member ? hasActiveAiKey(user) : false,
   };
 }
 

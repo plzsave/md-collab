@@ -122,6 +122,11 @@
         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z"/>
       </svg>
     </button>
+    <button id="ai-settings-btn" class="p-1.5 rounded-md hover:bg-gray-100 dark:hover:bg-gray-700" title="AIレビュー設定">
+      <svg class="w-5 h-5 text-gray-600 dark:text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-6.714 2.143L12 21l-2.286-6.857L3 12l6.714-2.143L12 3z"/>
+      </svg>
+    </button>
     <button id="darkmode-btn" class="p-1.5 rounded-md hover:bg-gray-100 dark:hover:bg-gray-700">
       <svg id="sun-icon" class="w-5 h-5 text-gray-600 dark:text-gray-300 hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24">
         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364-6.364l-.707.707M6.343 17.657l-.707.707M17.657 17.657l-.707-.707M6.343 6.343l-.707-.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"/>
@@ -175,6 +180,10 @@
         <!-- Doc toolbar -->
         <div class="h-10 border-b border-gray-200 dark:border-gray-700 flex items-center px-4 gap-2 flex-shrink-0 bg-white dark:bg-gray-800">
           <h2 id="doc-title" class="text-sm font-semibold text-gray-800 dark:text-gray-200 flex-1 truncate"></h2>
+          <button id="ai-review-btn" class="text-xs px-3 py-1 rounded-md bg-violet-600 hover:bg-violet-700 text-white font-medium transition-colors flex items-center gap-1" title="AIレビュー">
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-6.714 2.143L12 21l-2.286-6.857L3 12l6.714-2.143L12 3z"/></svg>
+            AIレビュー
+          </button>
           <button id="edit-btn" class="text-xs px-3 py-1 rounded-md bg-indigo-600 hover:bg-indigo-700 text-white font-medium transition-colors">編集</button>
           <button id="delete-doc-btn" class="text-xs px-2 py-1 rounded-md hover:bg-red-50 dark:hover:bg-red-900 text-red-500" title="削除">
             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -338,6 +347,64 @@
   </div>
 </div>
 
+<!-- AI settings modal -->
+<div id="ai-settings-modal" class="fixed inset-0 bg-black/40 z-50 hidden items-center justify-center">
+  <div class="bg-white dark:bg-gray-800 rounded-xl shadow-xl w-full max-w-md mx-4 fade-in">
+    <div class="p-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
+      <p class="text-sm font-semibold text-gray-700 dark:text-gray-300">AIレビュー設定</p>
+      <button id="ai-settings-close" class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200">✕</button>
+    </div>
+    <div class="p-4 space-y-3">
+      <div>
+        <label class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">プロバイダ</label>
+        <select id="ai-provider-select" class="w-full border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-2 text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-violet-500">
+          <option value="claude">Claude (Anthropic)</option>
+          <option value="openai">OpenAI</option>
+          <option value="gemini">Gemini (Google)</option>
+        </select>
+      </div>
+      <div>
+        <label id="ai-key-label" class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">API キー</label>
+        <input id="ai-key-input" type="password" autocomplete="off" placeholder="未登録" class="w-full border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-2 text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-violet-500">
+        <p id="ai-key-status" class="text-xs text-gray-400 mt-1"></p>
+        <p id="ai-key-help" class="text-xs text-gray-400 mt-1"></p>
+      </div>
+      <div>
+        <label class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">モデル</label>
+        <input id="ai-model-input" type="text" class="w-full border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-2 text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-violet-500">
+        <p id="ai-model-help" class="text-xs text-gray-400 mt-1"></p>
+      </div>
+    </div>
+    <div class="p-3 border-t border-gray-200 dark:border-gray-700 flex justify-between gap-2">
+      <button id="ai-key-clear-btn" class="text-sm px-3 py-1.5 rounded-lg text-red-500 hover:bg-red-50 dark:hover:bg-red-900/30">キーを削除</button>
+      <div class="flex gap-2">
+        <button id="ai-settings-cancel" class="text-sm px-4 py-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-600 dark:text-gray-300">閉じる</button>
+        <button id="ai-settings-save" class="text-sm px-4 py-1.5 rounded-lg bg-violet-600 hover:bg-violet-700 text-white font-medium">保存</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- AI review result modal -->
+<div id="ai-review-modal" class="fixed inset-0 bg-black/40 z-50 hidden items-center justify-center">
+  <div class="bg-white dark:bg-gray-800 rounded-xl shadow-xl w-full max-w-2xl mx-4 fade-in flex flex-col max-h-[85vh]">
+    <div class="p-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between flex-shrink-0">
+      <p class="text-sm font-semibold text-gray-700 dark:text-gray-300 flex items-center gap-1.5">
+        <svg class="w-4 h-4 text-violet-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-6.714 2.143L12 21l-2.286-6.857L3 12l6.714-2.143L12 3z"/></svg>
+        AIレビュー結果
+      </p>
+      <button id="ai-review-close" class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200">✕</button>
+    </div>
+    <div class="p-4 border-b border-gray-200 dark:border-gray-700 flex-shrink-0">
+      <input id="ai-review-instructions" type="text" placeholder="追加の指示（任意・例: API仕様の整合性を重点的に）" class="w-full border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-2 text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-violet-500">
+    </div>
+    <div id="ai-review-body" class="flex-1 overflow-y-auto p-5 md-body bg-white dark:bg-gray-900"></div>
+    <div class="p-3 border-t border-gray-200 dark:border-gray-700 flex justify-end gap-2 flex-shrink-0">
+      <button id="ai-review-rerun" class="text-sm px-4 py-1.5 rounded-lg bg-violet-600 hover:bg-violet-700 text-white font-medium disabled:opacity-60 disabled:cursor-not-allowed">再レビュー</button>
+    </div>
+  </div>
+</div>
+
 <!-- Notifications panel -->
 <div id="notif-panel" class="fixed top-12 right-0 w-80 bg-white dark:bg-gray-800 border-l border-b border-gray-200 dark:border-gray-700 shadow-xl z-40 hidden flex-col max-h-[calc(100vh-3rem)]">
   <div class="p-3 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between flex-shrink-0">
@@ -401,6 +468,9 @@ const state = {
   threads: [],
   members: [],
   unreadCount: 0,
+  hasAiKey: false,      // whether the active provider has a key (drives the review-button gate)
+  aiProvider: 'claude', // the user's selected provider
+  aiProviders: {},      // per-provider { hasKey, model }, loaded from getAiSettings
   filterMode: 'open',   // 'open' | 'all'
   pendingAnchor: null,  // { selectedText, contextBefore, contextAfter }
   pendingReplyThreadId: null,
@@ -432,6 +502,7 @@ function onAppState(data) {
   state.folders = data.folders || [];
   state.statuses = data.statuses || [];
   state.unreadCount = data.unreadCount || 0;
+  state.hasAiKey = !!data.hasAiKey;
   hideLoading();
   if (data.isSetupRequired) {
     showSetupScreen(data.isOwner);
@@ -1777,6 +1848,140 @@ function updateNotifBadge() {
   }
 }
 
+// ─── AI review (multi-provider) ──────────────────────────────────────────────────
+const AI_PROVIDER_META = {
+  claude: {
+    label: 'Claude',
+    keyUrl: 'https://console.anthropic.com/settings/keys',
+    keyUrlLabel: 'Anthropic Console',
+    modelHelp: '利用したい Claude モデル名（例: claude-opus-4-8, claude-sonnet-4-6, claude-haiku-4-5）。',
+  },
+  openai: {
+    label: 'OpenAI',
+    keyUrl: 'https://platform.openai.com/api-keys',
+    keyUrlLabel: 'OpenAI Platform',
+    modelHelp: '利用したい OpenAI モデル名を入力します（モデル名は変わりうるので最新の提供モデルをご確認ください）。',
+  },
+  gemini: {
+    label: 'Gemini',
+    keyUrl: 'https://aistudio.google.com/apikey',
+    keyUrlLabel: 'Google AI Studio',
+    modelHelp: '利用したい Gemini モデル名（例: gemini-2.5-flash, gemini-2.5-pro）。無料枠のキーは入力が学習に使われる場合があります。',
+  },
+};
+
+document.getElementById('ai-settings-btn').addEventListener('click', openAiSettings);
+document.getElementById('ai-settings-close').addEventListener('click', () => hideModal('ai-settings-modal'));
+document.getElementById('ai-settings-cancel').addEventListener('click', () => hideModal('ai-settings-modal'));
+document.getElementById('ai-provider-select').addEventListener('change', e => applyProviderToForm(e.target.value));
+
+// Fill the key/model fields and help text from the loaded per-provider settings.
+function applyProviderToForm(provider) {
+  const meta = AI_PROVIDER_META[provider] || AI_PROVIDER_META.claude;
+  const info = (state.aiProviders && state.aiProviders[provider]) || { hasKey: false, model: '' };
+  document.getElementById('ai-key-label').textContent = meta.label + ' API キー';
+  document.getElementById('ai-key-input').value = '';
+  document.getElementById('ai-model-input').value = info.model || '';
+  document.getElementById('ai-key-status').textContent = info.hasKey
+    ? '✓ キーは登録済みです（変更する場合のみ入力）'
+    : '⚠ キーが未登録です';
+  document.getElementById('ai-key-help').innerHTML =
+    '<a href="' + meta.keyUrl + '" target="_blank" class="text-violet-600 dark:text-violet-400 hover:underline">' + meta.keyUrlLabel + '</a>'
+    + ' でキーを取得できます。キーはあなた専用に保存され、他のメンバーには共有されません。';
+  document.getElementById('ai-model-help').textContent = meta.modelHelp;
+}
+
+function openAiSettings() {
+  const status = document.getElementById('ai-key-status');
+  status.textContent = '読み込み中…';
+  showModal('ai-settings-modal');
+  google.script.run
+    .withSuccessHandler(s => {
+      state.aiProvider = s.provider || 'claude';
+      state.aiProviders = s.providers || {};
+      state.hasAiKey = !!(state.aiProviders[state.aiProvider] && state.aiProviders[state.aiProvider].hasKey);
+      document.getElementById('ai-provider-select').value = state.aiProvider;
+      applyProviderToForm(state.aiProvider);
+    })
+    .withFailureHandler(e => { status.textContent = ''; onError(e); })
+    .getAiSettings();
+}
+
+document.getElementById('ai-settings-save').addEventListener('click', () => {
+  const btn = document.getElementById('ai-settings-save');
+  const provider = document.getElementById('ai-provider-select').value;
+  const key = document.getElementById('ai-key-input').value.trim();
+  const model = document.getElementById('ai-model-input').value.trim();
+  btn.disabled = true;
+  btn.textContent = '保存中…';
+  google.script.run
+    .withSuccessHandler(s => {
+      btn.disabled = false;
+      btn.textContent = '保存';
+      state.aiProvider = s.provider || 'claude';
+      state.aiProviders = s.providers || {};
+      state.hasAiKey = !!(state.aiProviders[state.aiProvider] && state.aiProviders[state.aiProvider].hasKey);
+      hideModal('ai-settings-modal');
+      showToast('AI設定を保存しました');
+    })
+    .withFailureHandler(e => { btn.disabled = false; btn.textContent = '保存'; onError(e); })
+    .saveAiSettings(provider, key, model);
+});
+
+document.getElementById('ai-key-clear-btn').addEventListener('click', () => {
+  const provider = document.getElementById('ai-provider-select').value;
+  const meta = AI_PROVIDER_META[provider] || AI_PROVIDER_META.claude;
+  if (!confirm('登録した ' + meta.label + ' APIキーを削除しますか？')) return;
+  google.script.run
+    .withSuccessHandler(s => {
+      state.aiProviders = s.providers || {};
+      state.hasAiKey = !!(state.aiProviders[state.aiProvider] && state.aiProviders[state.aiProvider].hasKey);
+      applyProviderToForm(provider);
+      showToast('APIキーを削除しました');
+    })
+    .withFailureHandler(onError)
+    .clearAiKey(provider);
+});
+
+document.getElementById('ai-review-btn').addEventListener('click', () => {
+  if (!state.currentDocId) return;
+  if (!state.hasAiKey) {
+    showToast('先にAI設定でAPIキーを登録してください');
+    openAiSettings();
+    return;
+  }
+  document.getElementById('ai-review-instructions').value = '';
+  showModal('ai-review-modal');
+  runAiReview();
+});
+document.getElementById('ai-review-close').addEventListener('click', () => hideModal('ai-review-modal'));
+document.getElementById('ai-review-rerun').addEventListener('click', runAiReview);
+
+function runAiReview() {
+  const body = document.getElementById('ai-review-body');
+  const rerun = document.getElementById('ai-review-rerun');
+  const instructions = document.getElementById('ai-review-instructions').value.trim();
+  const docId = state.currentDocId;
+  if (!docId) return;
+  rerun.disabled = true;
+  rerun.textContent = 'レビュー中…';
+  body.innerHTML = '<div class="flex items-center justify-center py-10 text-sm text-gray-400">AIがレビュー中です…（数十秒かかることがあります）</div>';
+  google.script.run
+    .withSuccessHandler(res => {
+      rerun.disabled = false;
+      rerun.textContent = '再レビュー';
+      body.innerHTML = renderMarkdown(res.review);
+      enhanceContent(body);
+      hljs.highlightAll();
+    })
+    .withFailureHandler(e => {
+      rerun.disabled = false;
+      rerun.textContent = '再レビュー';
+      body.innerHTML = `<div class="text-sm text-red-500 px-2 py-4">エラー: ${escapeHtml(String(e.message || e))}</div>`;
+    })
+    .reviewDocument(docId, instructions);
+}
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 function showModal(id) {
   const el = document.getElementById(id);
@@ -1851,7 +2056,7 @@ function refreshDocListSilently() {
 }
 
 // Close modals on backdrop click
-['comment-modal','reply-modal','new-doc-modal','new-folder-modal'].forEach(id => {
+['comment-modal','reply-modal','new-doc-modal','new-folder-modal','ai-settings-modal','ai-review-modal'].forEach(id => {
   document.getElementById(id).addEventListener('click', e => {
     if (e.target === document.getElementById(id)) hideModal(id);
   });
