@@ -1038,6 +1038,12 @@ const DEFAULT_MODELS: { [p in AiProvider]: string } = {
 // Guard against oversized payloads / runaway token use on very large documents.
 const MAX_REVIEW_CHARS = 100000;
 
+// Revision rewrites the *whole* document, so the output is as large as the input.
+// Cap the input well below the review limit to keep the single (non-streaming) GAS
+// request within output-token and execution-time bounds. Oversized docs are
+// refused, not truncated — truncating a rewrite would silently delete content.
+const MAX_REVISE_CHARS = 30000;
+
 function toProvider(value: unknown): AiProvider {
   const v = String(value || "");
   return (AI_PROVIDERS as string[]).includes(v) ? (v as AiProvider) : DEFAULT_AI_PROVIDER;
@@ -1149,14 +1155,14 @@ function fetchJson(label: string, url: string, options: GoogleAppsScript.URL_Fet
 // byte-stable. Caching only actually engages once the cached prefix exceeds the
 // model's minimum (~4096 tokens for Opus), so for a short system prompt this is a
 // no-op today — it pays off only if the reviewer prompt grows large.
-function reviewWithClaude(apiKey: string, model: string, systemText: string, userText: string): string {
+function reviewWithClaude(apiKey: string, model: string, systemText: string, userText: string, maxTokens = 8192): string {
   const { code, body } = fetchJson("Claude", "https://api.anthropic.com/v1/messages", {
     method: "post",
     contentType: "application/json",
     headers: { "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
     payload: JSON.stringify({
       model,
-      max_tokens: 8192,
+      max_tokens: maxTokens,
       system: [{ type: "text", text: systemText, cache_control: { type: "ephemeral" } }],
       messages: [{ role: "user", content: userText }],
     }),
@@ -1291,6 +1297,20 @@ function listGeminiModels(apiKey: string): string[] {
     .filter(Boolean);
 }
 
+/** Dispatch one chat completion to the active provider. `claudeMaxTokens` only applies to Claude. */
+function callProvider(
+  provider: AiProvider,
+  apiKey: string,
+  model: string,
+  systemText: string,
+  userText: string,
+  claudeMaxTokens?: number,
+): string {
+  if (provider === "claude") return reviewWithClaude(apiKey, model, systemText, userText, claudeMaxTokens);
+  if (provider === "openai") return reviewWithOpenAI(apiKey, model, systemText, userText);
+  return reviewWithGemini(apiKey, model, systemText, userText);
+}
+
 /**
  * Sends a managed document's Markdown to the user's chosen provider and returns a
  * review. `instructions` is optional extra guidance from the user (e.g. "API仕様の整合性を
@@ -1334,14 +1354,7 @@ export function reviewDocument(
     (extra ? `レビュー依頼者からの追加指示: ${extra}\n\n` : "") +
     `# ドキュメント名: ${name}\n\n${content}${truncatedNote}`;
 
-  let review: string;
-  if (provider === "claude") {
-    review = reviewWithClaude(apiKey, model, systemText, userText);
-  } else if (provider === "openai") {
-    review = reviewWithOpenAI(apiKey, model, systemText, userText);
-  } else {
-    review = reviewWithGemini(apiKey, model, systemText, userText);
-  }
+  const review = callProvider(provider, apiKey, model, systemText, userText);
 
   if (!review) {
     throw new Error("レビュー結果が空でした。モデルやドキュメント内容をご確認ください。");
@@ -1358,6 +1371,61 @@ export function reviewDocument(
     createdAt: saved.createdAt,
     createdByName: getMemberDisplayName(email, getMembers()),
   };
+}
+
+// LLMs sometimes wrap the whole answer in a ```markdown fence or ``` fence despite
+// being told not to. Strip a single fence that encloses the entire output.
+function stripCodeFence(text: string): string {
+  const m = text.match(/^\s*```[a-zA-Z]*\s*\n([\s\S]*?)\n```\s*$/);
+  return m ? m[1]! : text;
+}
+
+/**
+ * Generates a revised version of the document with the given review findings applied,
+ * using the active user's provider/model. Returns the proposed Markdown WITHOUT saving —
+ * the client previews it (original vs. proposed) and the human decides whether to save
+ * via updateDocument. Refuses oversized documents rather than truncating (a truncated
+ * rewrite would delete content).
+ */
+export function proposeRevision(
+  fileId: string,
+  reviewContent: string,
+  instructions: string,
+): { revised: string; provider: string; model: string } {
+  const email = requireMember();
+  const props = PropertiesService.getScriptProperties();
+  const provider = toProvider(props.getProperty(aiProviderProp(email)));
+  const apiKey = props.getProperty(aiKeyProp(provider, email));
+  if (!apiKey) {
+    throw new Error("APIキーが登録されていません。設定から登録してください。");
+  }
+  const model = props.getProperty(aiModelProp(provider, email)) || DEFAULT_MODELS[provider];
+
+  const review = String(reviewContent || "").trim();
+  if (!review) throw new Error("反映するレビュー内容がありません。");
+
+  const file = getManagedFile(fileId);
+  const content = file.getBlob().getDataAsString("UTF-8");
+  if (content.length > MAX_REVISE_CHARS) {
+    throw new Error(
+      `ドキュメントが長いため自動反映に未対応です（${MAX_REVISE_CHARS.toLocaleString()}字まで）。分割してお試しください。`,
+    );
+  }
+
+  const systemText =
+    "あなたは技術文書の編集者です。与えられた元の Markdown ドキュメントに、レビュー指摘を反映した改訂版を作成してください。" +
+    "元の構造・意図・トーンは保ち、指摘された箇所のみを的確に修正します。" +
+    "出力は改訂後の本文 Markdown のみ。前置き・あとがき・変更点の説明・全体をコードフェンスで囲むことは禁止です。";
+  const extra = String(instructions || "").trim();
+  const userText =
+    (extra ? `追加指示: ${extra}\n\n` : "") +
+    `# レビュー指摘\n\n${review}\n\n# 元のドキュメント\n\n${content}`;
+
+  const revised = stripCodeFence(callProvider(provider, apiKey, model, systemText, userText, 16384)).trim();
+  if (!revised) {
+    throw new Error("修正案が空でした。モデルやレビュー内容をご確認ください。");
+  }
+  return { revised, provider, model };
 }
 
 // Append one review row. Kept tiny and lock-guarded so it doesn't hold the script

@@ -435,8 +435,39 @@
     <div id="ai-review-body" class="flex-1 overflow-y-auto p-5 md-body bg-white dark:bg-gray-900"></div>
     <div class="p-3 border-t border-gray-200 dark:border-gray-700 flex justify-end gap-2 flex-shrink-0">
       <button id="ai-review-download" class="hidden text-sm px-4 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700" title="表示中のレビューを .md でダウンロード">レビューをDL</button>
+      <button id="ai-review-propose" class="hidden text-sm px-4 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-medium" title="このレビューをAIで本文に反映した修正案を作成">AIで修正案を作成</button>
       <button id="ai-review-to-edit" class="hidden text-sm px-4 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700">編集して反映</button>
       <button id="ai-review-rerun" class="text-sm px-4 py-1.5 rounded-lg bg-violet-600 hover:bg-violet-700 text-white font-medium disabled:opacity-60 disabled:cursor-not-allowed">レビュー実行</button>
+    </div>
+  </div>
+</div>
+
+<!-- AI revision proposal (side-by-side: original vs AI-revised) -->
+<div id="revise-modal" class="fixed inset-0 bg-black/40 z-50 hidden items-center justify-center">
+  <div class="bg-white dark:bg-gray-800 rounded-xl shadow-xl w-full max-w-5xl mx-4 fade-in flex flex-col max-h-[90vh]">
+    <div class="p-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between flex-shrink-0">
+      <p class="text-sm font-semibold text-gray-700 dark:text-gray-300 flex items-center gap-1.5">
+        <svg class="w-4 h-4 text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-6.714 2.143L12 21l-2.286-6.857L3 12l6.714-2.143L12 3z"/></svg>
+        AI修正案（左: 元 ／ 右: 修正案・編集可）
+      </p>
+      <button id="revise-close" class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200">✕</button>
+    </div>
+    <div class="flex-1 flex overflow-hidden min-h-0">
+      <div class="flex-1 flex flex-col overflow-hidden border-r border-gray-200 dark:border-gray-700">
+        <div class="px-3 py-1 text-xs text-gray-500 dark:text-gray-400 bg-gray-50 dark:bg-gray-900 border-b border-gray-200 dark:border-gray-700 flex-shrink-0">元のドキュメント</div>
+        <textarea id="revise-original" readonly class="flex-1 p-4 font-mono text-xs bg-gray-50 dark:bg-gray-900 text-gray-700 dark:text-gray-300 resize-none focus:outline-none leading-relaxed"></textarea>
+      </div>
+      <div class="flex-1 flex flex-col overflow-hidden">
+        <div class="px-3 py-1 text-xs text-gray-500 dark:text-gray-400 bg-gray-50 dark:bg-gray-900 border-b border-gray-200 dark:border-gray-700 flex-shrink-0">修正案（保存前に手直しできます）</div>
+        <textarea id="revise-proposed" class="flex-1 p-4 font-mono text-xs bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 resize-none focus:outline-none leading-relaxed" spellcheck="false"></textarea>
+      </div>
+    </div>
+    <div class="p-3 border-t border-gray-200 dark:border-gray-700 flex items-center justify-between gap-2 flex-shrink-0">
+      <span id="revise-status" class="text-xs text-gray-400 truncate"></span>
+      <div class="flex gap-2 flex-shrink-0">
+        <button id="revise-cancel" class="text-sm px-4 py-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-600 dark:text-gray-300">キャンセル</button>
+        <button id="revise-apply" class="text-sm px-4 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-medium disabled:opacity-60 disabled:cursor-not-allowed">適用して保存</button>
+      </div>
     </div>
   </div>
 </div>
@@ -2260,6 +2291,69 @@ document.getElementById('ai-review-download').addEventListener('click', () => {
 });
 document.getElementById('ai-review-history').addEventListener('change', e => showReview(Number(e.target.value)));
 
+// ─── AI revision (apply review → human-judged save) ───────────────────────────
+// Generate a revised document from the selected review, show it beside the original
+// for the human to judge/edit, then save through the normal updateDocument path.
+document.getElementById('ai-review-propose').addEventListener('click', () => {
+  const r = reviewHistory[Number(document.getElementById('ai-review-history').value || 0)];
+  if (!r || !state.currentDocId) return;
+  const btn = document.getElementById('ai-review-propose');
+  btn.disabled = true;
+  btn.textContent = '生成中…';
+  google.script.run
+    .withSuccessHandler(res => {
+      btn.disabled = false;
+      btn.textContent = 'AIで修正案を作成';
+      hideModal('ai-review-modal');
+      openReviseModal(res.revised, `${res.model} が生成`);
+    })
+    .withFailureHandler(e => { btn.disabled = false; btn.textContent = 'AIで修正案を作成'; onError(e); })
+    .proposeRevision(state.currentDocId, r.content, '');
+});
+
+function openReviseModal(revised, note) {
+  document.getElementById('revise-original').value = state.currentDocContent || '';
+  document.getElementById('revise-proposed').value = revised || '';
+  document.getElementById('revise-status').textContent = note || '';
+  showModal('revise-modal');
+}
+document.getElementById('revise-close').addEventListener('click', () => hideModal('revise-modal'));
+document.getElementById('revise-cancel').addEventListener('click', () => hideModal('revise-modal'));
+
+document.getElementById('revise-apply').addEventListener('click', () => applyRevision(false));
+function applyRevision(force) {
+  const content = document.getElementById('revise-proposed').value;
+  const btn = document.getElementById('revise-apply');
+  btn.disabled = true;
+  btn.textContent = '保存中…';
+  google.script.run
+    .withSuccessHandler(newLastUpdated => {
+      btn.disabled = false;
+      btn.textContent = '適用して保存';
+      state.currentDocContent = content;
+      state.currentDocLastUpdated = newLastUpdated || Date.now();
+      hideModal('revise-modal');
+      showToast('修正案を保存しました');
+      renderDocument(content, state.threads);
+    })
+    .withFailureHandler(e => {
+      btn.disabled = false;
+      btn.textContent = '適用して保存';
+      const msg = String((e && e.message) || e);
+      if (msg.indexOf('CONFLICT') !== -1) {
+        if (confirm('他のユーザーがこのドキュメントを更新しました。\n\n「OK」: 相手の変更を読み込み直す（この修正案は破棄されます）\n「キャンセル」: この修正案で上書き保存する')) {
+          hideModal('revise-modal');
+          openDocument(state.currentDocId, state.currentDocName);
+        } else {
+          applyRevision(true); // force overwrite
+        }
+      } else {
+        onError(e);
+      }
+    })
+    .updateDocument(state.currentDocId, content, force ? 0 : (state.currentDocLastUpdated || 0));
+}
+
 function reviewLabel(r) {
   const when = r.createdAt ? new Date(r.createdAt).toLocaleString('ja-JP', { dateStyle: 'short', timeStyle: 'short' }) : '';
   const who = r.createdByName ? ' · ' + r.createdByName : '';
@@ -2272,9 +2366,11 @@ function renderReviewHistory() {
   const body = document.getElementById('ai-review-body');
   const toEdit = document.getElementById('ai-review-to-edit');
   const dl = document.getElementById('ai-review-download');
+  const propose = document.getElementById('ai-review-propose');
   sel.innerHTML = '';
   toEdit.classList.toggle('hidden', !reviewHistory.length); // only useful once a review exists
   dl.classList.toggle('hidden', !reviewHistory.length);
+  propose.classList.toggle('hidden', !reviewHistory.length);
   if (!reviewHistory.length) {
     sel.classList.add('hidden');
     body.innerHTML = '<div class="flex items-center justify-center py-10 text-sm text-gray-400">まだレビューがありません。「レビュー実行」で作成できます。</div>';
@@ -2484,7 +2580,7 @@ function refreshDocListSilently() {
 }
 
 // Close modals on backdrop click
-['comment-modal','reply-modal','new-doc-modal','new-folder-modal','ai-settings-modal','ai-review-modal'].forEach(id => {
+['comment-modal','reply-modal','new-doc-modal','new-folder-modal','ai-settings-modal','ai-review-modal','revise-modal'].forEach(id => {
   document.getElementById(id).addEventListener('click', e => {
     if (e.target === document.getElementById(id)) hideModal(id);
   });
