@@ -36,4 +36,6 @@ export {
   saveAiSettings,
   clearAiKey,
   reviewDocument,
+  listAiModels,
+  getReviews,
 } from "./Code";

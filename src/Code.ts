@@ -1,5 +1,5 @@
-import { CONFIG, SHEETS, THREAD_COLS, COMMENT_COLS, MEMBER_COLS, NOTIF_COLS, FOLDER_COLS, STATUS_COLS, DOC_META_COLS, DEFAULT_STATUSES } from "./config";
-import type { Folder, MdDocument, CommentThread, Comment, Member, Notification, AppState, DocStatus } from "./types";
+import { CONFIG, SHEETS, THREAD_COLS, COMMENT_COLS, MEMBER_COLS, NOTIF_COLS, FOLDER_COLS, STATUS_COLS, DOC_META_COLS, REVIEW_COLS, DEFAULT_STATUSES } from "./config";
+import type { Folder, MdDocument, CommentThread, Comment, Member, Notification, AppState, DocStatus, SavedReview } from "./types";
 
 // ─── Utilities ───────────────────────────────────────────────────────────────
 
@@ -213,7 +213,7 @@ export function setupDb(baseFolderId: string): { ok: true } {
 }
 
 function initSheets(ss: GoogleAppsScript.Spreadsheet.Spreadsheet): void {
-  const names = [SHEETS.THREADS, SHEETS.COMMENTS, SHEETS.MEMBERS, SHEETS.NOTIFICATIONS, SHEETS.FOLDERS, SHEETS.STATUSES, SHEETS.DOC_META];
+  const names = [SHEETS.THREADS, SHEETS.COMMENTS, SHEETS.MEMBERS, SHEETS.NOTIFICATIONS, SHEETS.FOLDERS, SHEETS.STATUSES, SHEETS.DOC_META, SHEETS.REVIEWS];
   const defaultSheet = ss.getSheets()[0];
   for (const name of names) {
     const existing = ss.getSheetByName(name);
@@ -1228,12 +1228,78 @@ function reviewWithGemini(apiKey: string, model: string, systemText: string, use
     .trim();
 }
 
+// ─── Model discovery ─────────────────────────────────────────────────────────
+//
+// Each provider exposes a "list models" endpoint. We surface the result as
+// suggestions in the settings UI so users can pick a currently-valid model id
+// instead of guessing — model names change over time, so this is fetched live
+// with the user's own key rather than hardcoded.
+
+/** Lists chat-capable model ids the active user's stored key can use for `provider`. */
+export function listAiModels(provider: string): string[] {
+  const email = requireMember();
+  const p = toProvider(provider);
+  const apiKey = PropertiesService.getScriptProperties().getProperty(aiKeyProp(p, email));
+  if (!apiKey) {
+    throw new Error("先に該当プロバイダのAPIキーを保存してください。");
+  }
+  if (p === "claude") return listClaudeModels(apiKey);
+  if (p === "openai") return listOpenAiModels(apiKey);
+  return listGeminiModels(apiKey);
+}
+
+function listClaudeModels(apiKey: string): string[] {
+  const { code, body } = fetchJson("Claude", "https://api.anthropic.com/v1/models?limit=1000", {
+    method: "get",
+    headers: { "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
+    muteHttpExceptions: true,
+  });
+  if (code !== 200) throw aiHttpError("Claude", code, "", extractApiError(body));
+  const json = JSON.parse(body) as { data?: { id?: string }[] };
+  return (json.data ?? []).map((m) => m.id || "").filter(Boolean);
+}
+
+function listOpenAiModels(apiKey: string): string[] {
+  const { code, body } = fetchJson("OpenAI", "https://api.openai.com/v1/models", {
+    method: "get",
+    headers: { Authorization: `Bearer ${apiKey}` },
+    muteHttpExceptions: true,
+  });
+  if (code !== 200) throw aiHttpError("OpenAI", code, "", extractApiError(body));
+  const json = JSON.parse(body) as { data?: { id?: string }[] };
+  // Best-effort filter to chat-capable models — the list also includes embedding,
+  // tts, whisper, moderation, and image models that can't do chat completions.
+  return (json.data ?? [])
+    .map((m) => m.id || "")
+    .filter((id) => /^(gpt|o\d|chatgpt)/i.test(id))
+    .sort();
+}
+
+function listGeminiModels(apiKey: string): string[] {
+  const { code, body } = fetchJson("Gemini", "https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000", {
+    method: "get",
+    headers: { "x-goog-api-key": apiKey },
+    muteHttpExceptions: true,
+  });
+  if (code !== 200) throw aiHttpError("Gemini", code, "", extractApiError(body));
+  const json = JSON.parse(body) as { models?: { name?: string; supportedGenerationMethods?: string[] }[] };
+  // Keep only models that support generateContent (what reviewWithGemini calls),
+  // and strip the "models/" prefix so the value matches what the UI expects.
+  return (json.models ?? [])
+    .filter((m) => (m.supportedGenerationMethods || []).indexOf("generateContent") !== -1)
+    .map((m) => (m.name || "").replace(/^models\//, ""))
+    .filter(Boolean);
+}
+
 /**
  * Sends a managed document's Markdown to the user's chosen provider and returns a
  * review. `instructions` is optional extra guidance from the user (e.g. "API仕様の整合性を
  * 重点的に"). The provider, key, and model are read from the active user's stored settings.
  */
-export function reviewDocument(fileId: string, instructions: string): { review: string } {
+export function reviewDocument(
+  fileId: string,
+  instructions: string,
+): { review: string; provider: string; model: string; createdAt: string; createdByName: string } {
   const email = requireMember();
   const props = PropertiesService.getScriptProperties();
   const provider = toProvider(props.getProperty(aiProviderProp(email)));
@@ -1256,7 +1322,9 @@ export function reviewDocument(fileId: string, instructions: string): { review: 
   const systemText =
     "あなたは経験豊富な技術文書レビュアーです。与えられた Markdown ドキュメントをレビューし、" +
     "日本語で簡潔かつ具体的に指摘してください。観点: (1) 構成と読みやすさ, (2) 内容の正確さ・矛盾, " +
-    "(3) 説明不足や曖昧な箇所, (4) 誤字脱字や表記ゆれ。" +
+    "(3) 説明不足や曖昧な箇所, (4) 誤字脱字や表記ゆれ, " +
+    "(5) 実装・運用上の実現可能性（該当する場合のみ: 実行環境やプラットフォームの制約、性能・スケール面の懸念。" +
+    "技術設計でない文書では無理に触れない）。" +
     "出力は Markdown で、『要約』『良い点』『改善提案』の見出しに分け、改善提案は該当箇所が分かるよう引用してください。";
 
   // Per-review content lives in the user turn (the volatile part), so the system
@@ -1278,7 +1346,56 @@ export function reviewDocument(fileId: string, instructions: string): { review: 
   if (!review) {
     throw new Error("レビュー結果が空でした。モデルやドキュメント内容をご確認ください。");
   }
-  return { review };
+
+  // Persist so the review survives the modal being closed (full history, newest
+  // first via getReviews). The slow provider call above ran outside any lock;
+  // only this short append takes the script lock.
+  const saved = appendReview(fileId, provider, model, review, email);
+  return {
+    review,
+    provider,
+    model,
+    createdAt: saved.createdAt,
+    createdByName: getMemberDisplayName(email, getMembers()),
+  };
+}
+
+// Append one review row. Kept tiny and lock-guarded so it doesn't hold the script
+// lock during the (slow) provider request that produced `content`.
+function appendReview(
+  documentId: string,
+  provider: AiProvider,
+  model: string,
+  content: string,
+  email: string,
+): { id: string; createdAt: string } {
+  return withLock(() => {
+    const sheet = getSheet(SHEETS.REVIEWS);
+    const id = uuid();
+    const createdAt = now();
+    sheet.appendRow([id, documentId, provider, model, content, email, createdAt]);
+    return { id, createdAt };
+  });
+}
+
+/** Saved AI reviews for a document, newest first. */
+export function getReviews(documentId: string): SavedReview[] {
+  requireMember();
+  getManagedFile(documentId); // ensure the document belongs to this workspace
+  const members = getMembers();
+  return sheetData(getSheet(SHEETS.REVIEWS))
+    .filter((r) => r[REVIEW_COLS.DOCUMENT_ID] === documentId)
+    .map((r) => ({
+      id: r[REVIEW_COLS.REVIEW_ID]!,
+      documentId,
+      provider: r[REVIEW_COLS.PROVIDER]!,
+      model: r[REVIEW_COLS.MODEL]!,
+      content: r[REVIEW_COLS.CONTENT]!,
+      createdBy: r[REVIEW_COLS.CREATED_BY]!,
+      createdByName: getMemberDisplayName(r[REVIEW_COLS.CREATED_BY]!, members),
+      createdAt: r[REVIEW_COLS.CREATED_AT]!,
+    }))
+    .reverse(); // rows are appended chronologically → reverse for newest-first
 }
 
 // ─── App entry ───────────────────────────────────────────────────────────────

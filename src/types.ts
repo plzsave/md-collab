@@ -69,6 +69,18 @@ export interface Notification {
   message: string;
 }
 
+/** A persisted AI review of a document, kept as full history (newest first). */
+export interface SavedReview {
+  id: string;
+  documentId: string;
+  provider: string;
+  model: string;
+  content: string;
+  createdBy: string;
+  createdByName: string;
+  createdAt: string;
+}
+
 export interface AppState {
   currentUser: string;
   currentUserName: string;
