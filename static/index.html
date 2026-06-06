@@ -220,6 +220,10 @@
     <div id="edit-panel" class="flex-1 flex flex-col overflow-hidden hidden">
       <div class="h-10 border-b border-gray-200 dark:border-gray-700 flex items-center px-4 gap-2 flex-shrink-0 bg-white dark:bg-gray-800">
         <h2 id="edit-title" class="text-sm font-semibold text-gray-800 dark:text-gray-200 flex-1 truncate"></h2>
+        <button id="edit-review-toggle" class="text-xs px-3 py-1 rounded-md border border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 font-medium flex items-center gap-1" title="保存されたAIレビューを横に表示">
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-6.714 2.143L12 21l-2.286-6.857L3 12l6.714-2.143L12 3z"/></svg>
+          レビュー
+        </button>
         <button id="save-btn" class="text-xs px-3 py-1 rounded-md bg-indigo-600 hover:bg-indigo-700 text-white font-medium transition-colors">保存</button>
         <button id="cancel-edit-btn" class="text-xs px-3 py-1 rounded-md hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-600 dark:text-gray-400 font-medium">キャンセル</button>
       </div>
@@ -231,6 +235,17 @@
         <div class="flex-1 flex flex-col overflow-hidden">
           <div class="px-3 py-1 text-xs text-gray-500 dark:text-gray-400 bg-gray-50 dark:bg-gray-900 border-b border-gray-200 dark:border-gray-700">プレビュー</div>
           <div id="preview-pane" class="flex-1 overflow-y-auto p-4 md-body bg-white dark:bg-gray-900"></div>
+        </div>
+        <!-- Saved AI review, shown beside the editor so it can be referenced while revising -->
+        <div id="edit-review-panel" class="hidden w-96 flex-shrink-0 border-l border-gray-200 dark:border-gray-700 flex flex-col bg-white dark:bg-gray-800">
+          <div class="px-3 py-1.5 border-b border-gray-200 dark:border-gray-700 flex items-center gap-2 flex-shrink-0">
+            <span class="text-xs font-semibold text-gray-700 dark:text-gray-300 flex items-center gap-1 flex-shrink-0">
+              <svg class="w-3.5 h-3.5 text-violet-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-6.714 2.143L12 21l-2.286-6.857L3 12l6.714-2.143L12 3z"/></svg>
+              AIレビュー
+            </span>
+            <select id="edit-review-history" class="hidden flex-1 min-w-0 border border-gray-300 dark:border-gray-600 rounded px-2 py-1 text-xs bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-200 focus:outline-none focus:ring-1 focus:ring-violet-500"></select>
+          </div>
+          <div id="edit-review-body" class="flex-1 overflow-y-auto p-4 md-body text-sm bg-white dark:bg-gray-900"></div>
         </div>
       </div>
     </div>
@@ -414,6 +429,7 @@
     </div>
     <div id="ai-review-body" class="flex-1 overflow-y-auto p-5 md-body bg-white dark:bg-gray-900"></div>
     <div class="p-3 border-t border-gray-200 dark:border-gray-700 flex justify-end gap-2 flex-shrink-0">
+      <button id="ai-review-to-edit" class="hidden text-sm px-4 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700">編集して反映</button>
       <button id="ai-review-rerun" class="text-sm px-4 py-1.5 rounded-lg bg-violet-600 hover:bg-violet-700 text-white font-medium disabled:opacity-60 disabled:cursor-not-allowed">レビュー実行</button>
     </div>
   </div>
@@ -1659,6 +1675,7 @@ function switchToEditMode() {
   const editor = document.getElementById('editor-pane');
   editor.value = state.currentDocContent;
   updatePreview();
+  setEditReviewPanel(false); // start each edit session with the panel closed
   editor.focus();
 }
 
@@ -2237,7 +2254,9 @@ function reviewLabel(r) {
 function renderReviewHistory() {
   const sel = document.getElementById('ai-review-history');
   const body = document.getElementById('ai-review-body');
+  const toEdit = document.getElementById('ai-review-to-edit');
   sel.innerHTML = '';
+  toEdit.classList.toggle('hidden', !reviewHistory.length); // only useful once a review exists
   if (!reviewHistory.length) {
     sel.classList.add('hidden');
     body.innerHTML = '<div class="flex items-center justify-center py-10 text-sm text-gray-400">まだレビューがありません。「レビュー実行」で作成できます。</div>';
@@ -2261,6 +2280,67 @@ function showReview(i) {
   body.innerHTML = renderMarkdown(r.content);
   enhanceContent(body);
   hljs.highlightAll();
+}
+
+// Fetch saved reviews for the current doc into reviewHistory, then run cb.
+function loadReviewsThen(cb) {
+  const docId = state.currentDocId;
+  if (!docId) return;
+  google.script.run
+    .withSuccessHandler(list => { reviewHistory = list || []; cb(); })
+    .withFailureHandler(onError)
+    .getReviews(docId);
+}
+
+// ─── Review reference panel (edit mode) ───────────────────────────────────────
+// Lets the worker read a saved review beside the editor while revising the source,
+// instead of losing it when the modal closes. Reuses the same reviewHistory data.
+document.getElementById('edit-review-history').addEventListener('change', e => showEditReview(Number(e.target.value)));
+document.getElementById('edit-review-toggle').addEventListener('click', () => {
+  const panel = document.getElementById('edit-review-panel');
+  setEditReviewPanel(panel.classList.contains('hidden'));
+});
+document.getElementById('ai-review-to-edit').addEventListener('click', () => {
+  hideModal('ai-review-modal');
+  switchToEditMode();
+  setEditReviewPanel(true);
+});
+
+function setEditReviewPanel(open) {
+  const panel = document.getElementById('edit-review-panel');
+  const btn = document.getElementById('edit-review-toggle');
+  panel.classList.toggle('hidden', !open);
+  btn.classList.toggle('bg-violet-100', open);
+  btn.classList.toggle('dark:bg-violet-900/40', open);
+  if (open) loadReviewsThen(renderEditReviewPanel); // refetch so it reflects newly-saved reviews
+}
+
+function renderEditReviewPanel() {
+  const sel = document.getElementById('edit-review-history');
+  const body = document.getElementById('edit-review-body');
+  sel.innerHTML = '';
+  if (!reviewHistory.length) {
+    sel.classList.add('hidden');
+    body.innerHTML = '<div class="text-sm text-gray-400 p-4">保存されたレビューがありません。ビュー画面の「AIレビュー」から作成できます。</div>';
+    return;
+  }
+  sel.classList.remove('hidden');
+  reviewHistory.forEach((r, i) => {
+    const opt = document.createElement('option');
+    opt.value = String(i);
+    opt.textContent = reviewLabel(r);
+    sel.appendChild(opt);
+  });
+  sel.value = '0';
+  showEditReview(0);
+}
+
+function showEditReview(i) {
+  const r = reviewHistory[i];
+  const body = document.getElementById('edit-review-body');
+  if (!r) { body.innerHTML = ''; return; }
+  body.innerHTML = renderMarkdown(r.content);
+  enhanceContent(body);
 }
 
 function runAiReview() {
