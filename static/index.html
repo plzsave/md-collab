@@ -194,6 +194,11 @@
             AIレビュー
           </button>
           <button id="edit-btn" class="text-xs px-3 py-1 rounded-md bg-indigo-600 hover:bg-indigo-700 text-white font-medium transition-colors">編集</button>
+          <button id="download-doc-btn" class="text-xs px-2 py-1 rounded-md hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-600 dark:text-gray-300" title="本文を .md でダウンロード">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
+            </svg>
+          </button>
           <button id="delete-doc-btn" class="text-xs px-2 py-1 rounded-md hover:bg-red-50 dark:hover:bg-red-900 text-red-500" title="削除">
             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
@@ -429,6 +434,7 @@
     </div>
     <div id="ai-review-body" class="flex-1 overflow-y-auto p-5 md-body bg-white dark:bg-gray-900"></div>
     <div class="p-3 border-t border-gray-200 dark:border-gray-700 flex justify-end gap-2 flex-shrink-0">
+      <button id="ai-review-download" class="hidden text-sm px-4 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700" title="表示中のレビューを .md でダウンロード">レビューをDL</button>
       <button id="ai-review-to-edit" class="hidden text-sm px-4 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700">編集して反映</button>
       <button id="ai-review-rerun" class="text-sm px-4 py-1.5 rounded-lg bg-violet-600 hover:bg-violet-700 text-white font-medium disabled:opacity-60 disabled:cursor-not-allowed">レビュー実行</button>
     </div>
@@ -1681,6 +1687,10 @@ function switchToEditMode() {
 
 document.getElementById('edit-btn').addEventListener('click', switchToEditMode);
 document.getElementById('cancel-edit-btn').addEventListener('click', switchToViewMode);
+document.getElementById('download-doc-btn').addEventListener('click', () => {
+  if (!state.currentDocId) return;
+  downloadTextFile(safeFileName(state.currentDocName) + '.md', state.currentDocContent || '');
+});
 document.getElementById('save-btn').addEventListener('click', () => saveDocument());
 
 document.getElementById('editor-pane').addEventListener('input', updatePreview);
@@ -2242,6 +2252,12 @@ document.getElementById('ai-review-btn').addEventListener('click', () => {
 });
 document.getElementById('ai-review-close').addEventListener('click', () => hideModal('ai-review-modal'));
 document.getElementById('ai-review-rerun').addEventListener('click', runAiReview);
+document.getElementById('ai-review-download').addEventListener('click', () => {
+  const r = reviewHistory[Number(document.getElementById('ai-review-history').value || 0)];
+  if (!r) return;
+  const stamp = r.createdAt ? r.createdAt.slice(0, 10) : '';
+  downloadTextFile(`${safeFileName(state.currentDocName)}-review${stamp ? '-' + stamp : ''}.md`, r.content);
+});
 document.getElementById('ai-review-history').addEventListener('change', e => showReview(Number(e.target.value)));
 
 function reviewLabel(r) {
@@ -2255,8 +2271,10 @@ function renderReviewHistory() {
   const sel = document.getElementById('ai-review-history');
   const body = document.getElementById('ai-review-body');
   const toEdit = document.getElementById('ai-review-to-edit');
+  const dl = document.getElementById('ai-review-download');
   sel.innerHTML = '';
   toEdit.classList.toggle('hidden', !reviewHistory.length); // only useful once a review exists
+  dl.classList.toggle('hidden', !reviewHistory.length);
   if (!reviewHistory.length) {
     sel.classList.add('hidden');
     body.innerHTML = '<div class="flex items-center justify-center py-10 text-sm text-gray-400">まだレビューがありません。「レビュー実行」で作成できます。</div>';
@@ -2374,6 +2392,25 @@ function runAiReview() {
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
+
+// Trigger a client-side download of `text` as a file (no server round trip — the
+// content is already in the client). Used to export the doc body and AI reviews so
+// operators can feed both to an external AI of their choice.
+function downloadTextFile(filename, text) {
+  const blob = new Blob([text != null ? text : ''], { type: 'text/markdown;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+function safeFileName(name) {
+  return (String(name || '').replace(/[\\/:*?"<>|]/g, '_').trim()) || 'document';
+}
+
 function showModal(id) {
   const el = document.getElementById(id);
   el.classList.remove('hidden');
