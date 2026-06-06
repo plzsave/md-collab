@@ -10,6 +10,7 @@ export const SHEETS = {
   FOLDERS: "folders",
   STATUSES: "statuses",
   DOC_META: "doc_meta",
+  REVIEWS: "reviews",
 } as const;
 
 /** Default workflow statuses, seeded in-memory until the user customizes them. */
@@ -82,4 +83,14 @@ export const DOC_META_COLS = {
   STATUS_ID: 1,
   ARCHIVED: 2,
   ASSIGNEE: 3,
+} as const;
+
+export const REVIEW_COLS = {
+  REVIEW_ID: 0,
+  DOCUMENT_ID: 1,
+  PROVIDER: 2,
+  MODEL: 3,
+  CONTENT: 4,
+  CREATED_BY: 5,
+  CREATED_AT: 6,
 } as const;

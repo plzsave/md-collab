@@ -37,4 +37,5 @@ export {
   clearAiKey,
   reviewDocument,
   listAiModels,
+  getReviews,
 } from "./Code";

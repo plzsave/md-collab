@@ -408,12 +408,13 @@
       </p>
       <button id="ai-review-close" class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200">✕</button>
     </div>
-    <div class="p-4 border-b border-gray-200 dark:border-gray-700 flex-shrink-0">
+    <div class="p-4 border-b border-gray-200 dark:border-gray-700 flex-shrink-0 space-y-2">
       <input id="ai-review-instructions" type="text" placeholder="追加の指示（任意・例: API仕様の整合性を重点的に）" class="w-full border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-2 text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-violet-500">
+      <select id="ai-review-history" class="hidden w-full border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-1.5 text-xs bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-200 focus:outline-none focus:ring-2 focus:ring-violet-500" title="保存されたレビュー履歴"></select>
     </div>
     <div id="ai-review-body" class="flex-1 overflow-y-auto p-5 md-body bg-white dark:bg-gray-900"></div>
     <div class="p-3 border-t border-gray-200 dark:border-gray-700 flex justify-end gap-2 flex-shrink-0">
-      <button id="ai-review-rerun" class="text-sm px-4 py-1.5 rounded-lg bg-violet-600 hover:bg-violet-700 text-white font-medium disabled:opacity-60 disabled:cursor-not-allowed">再レビュー</button>
+      <button id="ai-review-rerun" class="text-sm px-4 py-1.5 rounded-lg bg-violet-600 hover:bg-violet-700 text-white font-medium disabled:opacity-60 disabled:cursor-not-allowed">レビュー実行</button>
     </div>
   </div>
 </div>
@@ -2202,6 +2203,8 @@ document.getElementById('ai-key-clear-btn').addEventListener('click', () => {
     .clearAiKey(provider);
 });
 
+let reviewHistory = []; // saved reviews for the current doc, newest first
+
 document.getElementById('ai-review-btn').addEventListener('click', () => {
   if (!state.currentDocId) return;
   if (!state.hasAiKey) {
@@ -2210,11 +2213,55 @@ document.getElementById('ai-review-btn').addEventListener('click', () => {
     return;
   }
   document.getElementById('ai-review-instructions').value = '';
+  reviewHistory = [];
   showModal('ai-review-modal');
-  runAiReview();
+  // Show saved reviews first (don't auto-run — a fresh review costs an API call).
+  const body = document.getElementById('ai-review-body');
+  body.innerHTML = '<div class="flex items-center justify-center py-10 text-sm text-gray-400">読み込み中…</div>';
+  google.script.run
+    .withSuccessHandler(list => { reviewHistory = list || []; renderReviewHistory(); })
+    .withFailureHandler(e => { body.innerHTML = ''; onError(e); })
+    .getReviews(state.currentDocId);
 });
 document.getElementById('ai-review-close').addEventListener('click', () => hideModal('ai-review-modal'));
 document.getElementById('ai-review-rerun').addEventListener('click', runAiReview);
+document.getElementById('ai-review-history').addEventListener('change', e => showReview(Number(e.target.value)));
+
+function reviewLabel(r) {
+  const when = r.createdAt ? new Date(r.createdAt).toLocaleString('ja-JP', { dateStyle: 'short', timeStyle: 'short' }) : '';
+  const who = r.createdByName ? ' · ' + r.createdByName : '';
+  return `${r.model || r.provider || 'AI'} — ${when}${who}`;
+}
+
+// Populate the history dropdown and show the newest review (or an empty state).
+function renderReviewHistory() {
+  const sel = document.getElementById('ai-review-history');
+  const body = document.getElementById('ai-review-body');
+  sel.innerHTML = '';
+  if (!reviewHistory.length) {
+    sel.classList.add('hidden');
+    body.innerHTML = '<div class="flex items-center justify-center py-10 text-sm text-gray-400">まだレビューがありません。「レビュー実行」で作成できます。</div>';
+    return;
+  }
+  sel.classList.remove('hidden');
+  reviewHistory.forEach((r, i) => {
+    const opt = document.createElement('option');
+    opt.value = String(i);
+    opt.textContent = reviewLabel(r);
+    sel.appendChild(opt);
+  });
+  sel.value = '0';
+  showReview(0);
+}
+
+function showReview(i) {
+  const r = reviewHistory[i];
+  const body = document.getElementById('ai-review-body');
+  if (!r) { body.innerHTML = ''; return; }
+  body.innerHTML = renderMarkdown(r.content);
+  enhanceContent(body);
+  hljs.highlightAll();
+}
 
 function runAiReview() {
   const body = document.getElementById('ai-review-body');
@@ -2224,18 +2271,23 @@ function runAiReview() {
   if (!docId) return;
   rerun.disabled = true;
   rerun.textContent = 'レビュー中…';
+  document.getElementById('ai-review-history').classList.add('hidden');
   body.innerHTML = '<div class="flex items-center justify-center py-10 text-sm text-gray-400">AIがレビュー中です…（数十秒かかることがあります）</div>';
   google.script.run
     .withSuccessHandler(res => {
       rerun.disabled = false;
-      rerun.textContent = '再レビュー';
-      body.innerHTML = renderMarkdown(res.review);
-      enhanceContent(body);
-      hljs.highlightAll();
+      rerun.textContent = 'レビュー実行';
+      // The new review was saved server-side; prepend it so it becomes the newest.
+      reviewHistory.unshift({
+        id: '', documentId: docId, provider: res.provider, model: res.model,
+        content: res.review, createdBy: '', createdByName: res.createdByName || '', createdAt: res.createdAt,
+      });
+      renderReviewHistory();
     })
     .withFailureHandler(e => {
       rerun.disabled = false;
-      rerun.textContent = '再レビュー';
+      rerun.textContent = 'レビュー実行';
+      if (reviewHistory.length) document.getElementById('ai-review-history').classList.remove('hidden');
       body.innerHTML = `<div class="text-sm text-red-500 px-2 py-4">エラー: ${escapeHtml(String(e.message || e))}</div>`;
     })
     .reviewDocument(docId, instructions);
