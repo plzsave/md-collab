@@ -968,24 +968,18 @@ function openDocument(docId, docName) {
     el.classList.toggle('border-l-indigo-500', active);
   });
 
-  // Load content and threads in parallel
-  let content = null, threads = null;
-  function tryRender() {
-    if (content !== null && threads !== null) {
+  // Load content + threads in a single round trip (see getDocumentBundle): GAS
+  // serializes google.script.run calls, so two calls meant two server dispatches.
+  google.script.run
+    .withSuccessHandler(b => {
       hideLoading();
-      state.currentDocContent = content;
-      state.threads = threads;
-      renderDocument(content, threads);
-    }
-  }
-  google.script.run
-    .withSuccessHandler(c => { content = c.content; state.currentDocLastUpdated = c.lastUpdated || 0; tryRender(); })
+      state.currentDocContent = b.content;
+      state.currentDocLastUpdated = b.lastUpdated || 0;
+      state.threads = b.threads;
+      renderDocument(b.content, b.threads);
+    })
     .withFailureHandler(onError)
-    .getDocument(docId);
-  google.script.run
-    .withSuccessHandler(t => { threads = t; tryRender(); })
-    .withFailureHandler(onError)
-    .getThreadsForDocument(docId);
+    .getDocumentBundle(docId);
 }
 
 function renderDocument(content, threads) {

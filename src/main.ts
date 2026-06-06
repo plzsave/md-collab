@@ -9,6 +9,7 @@ export {
   deleteFolder,
   getDocumentList,
   getDocument,
+  getDocumentBundle,
   createDocument,
   updateDocument,
   deleteDocument,

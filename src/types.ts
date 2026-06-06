@@ -80,6 +80,6 @@ export interface AppState {
   folders: Folder[];
   statuses: DocStatus[];
   unreadCount: number;
-  /** Whether the current user has registered a Gemini API key for AI review. */
+  /** Whether the current user has registered an API key for their selected AI review provider. */
   hasAiKey: boolean;
 }

@@ -532,6 +532,24 @@ export function getDocument(fileId: string): { content: string; lastUpdated: num
   };
 }
 
+/**
+ * Opening a document needs both its body and its comment threads. Bundling them
+ * into one call halves the `google.script.run` round trips (each carries fixed
+ * GAS dispatch overhead) and does the workspace authorization check (getManagedFile)
+ * once instead of once per call.
+ */
+export function getDocumentBundle(
+  fileId: string,
+): { content: string; lastUpdated: number; threads: CommentThread[] } {
+  requireMember();
+  const file = getManagedFile(fileId);
+  return {
+    content: file.getBlob().getDataAsString("UTF-8"),
+    lastUpdated: file.getLastUpdated().getTime(),
+    threads: collectThreadsForDocument(fileId),
+  };
+}
+
 export function createDocument(folderId: string, title: string): MdDocument {
   return withLock(() => {
     requireMember();
@@ -591,6 +609,12 @@ export function getDocumentName(fileId: string): string {
 export function getThreadsForDocument(documentId: string): CommentThread[] {
   requireMember();
   getManagedFile(documentId); // ensure the document belongs to this workspace
+  return collectThreadsForDocument(documentId);
+}
+
+// Core thread assembly, factored out so getDocumentBundle can reuse it without
+// repeating the requireMember/getManagedFile guards its callers already run.
+function collectThreadsForDocument(documentId: string): CommentThread[] {
   const tSheet = getSheet(SHEETS.THREADS);
   const cSheet = getSheet(SHEETS.COMMENTS);
   const members = getMembers();
