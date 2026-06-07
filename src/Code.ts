@@ -1,5 +1,5 @@
-import { CONFIG, SHEETS, THREAD_COLS, COMMENT_COLS, MEMBER_COLS, NOTIF_COLS, FOLDER_COLS, STATUS_COLS, DOC_META_COLS, REVIEW_COLS, DEFAULT_STATUSES } from "./config";
-import type { Folder, MdDocument, CommentThread, Comment, Member, Notification, AppState, DocStatus, SavedReview } from "./types";
+import { CONFIG, SHEETS, THREAD_COLS, COMMENT_COLS, MEMBER_COLS, NOTIF_COLS, FOLDER_COLS, STATUS_COLS, DOC_META_COLS, REVIEW_COLS, REVISION_COLS, DEFAULT_STATUSES } from "./config";
+import type { Folder, MdDocument, CommentThread, Comment, Member, Notification, AppState, DocStatus, SavedReview, PendingRevision } from "./types";
 
 // ─── Utilities ───────────────────────────────────────────────────────────────
 
@@ -213,7 +213,7 @@ export function setupDb(baseFolderId: string): { ok: true } {
 }
 
 function initSheets(ss: GoogleAppsScript.Spreadsheet.Spreadsheet): void {
-  const names = [SHEETS.THREADS, SHEETS.COMMENTS, SHEETS.MEMBERS, SHEETS.NOTIFICATIONS, SHEETS.FOLDERS, SHEETS.STATUSES, SHEETS.DOC_META, SHEETS.REVIEWS];
+  const names = [SHEETS.THREADS, SHEETS.COMMENTS, SHEETS.MEMBERS, SHEETS.NOTIFICATIONS, SHEETS.FOLDERS, SHEETS.STATUSES, SHEETS.DOC_META, SHEETS.REVIEWS, SHEETS.REVISIONS];
   const defaultSheet = ss.getSheets()[0];
   for (const name of names) {
     const existing = ss.getSheetByName(name);
@@ -540,13 +540,15 @@ export function getDocument(fileId: string): { content: string; lastUpdated: num
  */
 export function getDocumentBundle(
   fileId: string,
-): { content: string; lastUpdated: number; threads: CommentThread[] } {
-  requireMember();
+): { content: string; lastUpdated: number; threads: CommentThread[]; pendingRevision: PendingRevision | null } {
+  const email = requireMember();
   const file = getManagedFile(fileId);
   return {
     content: file.getBlob().getDataAsString("UTF-8"),
     lastUpdated: file.getLastUpdated().getTime(),
     threads: collectThreadsForDocument(fileId),
+    // Surface any unsaved AI-revision draft so reopening the doc resumes it.
+    pendingRevision: readPendingRevision(fileId, email),
   };
 }
 
@@ -1382,16 +1384,17 @@ function stripCodeFence(text: string): string {
 
 /**
  * Generates a revised version of the document with the given review findings applied,
- * using the active user's provider/model. Returns the proposed Markdown WITHOUT saving —
- * the client previews it (original vs. proposed) and the human decides whether to save
- * via updateDocument. Refuses oversized documents rather than truncating (a truncated
- * rewrite would delete content).
+ * using the active user's provider/model, and persists it as a *pending draft* (one per
+ * document+user). The draft is loaded into the editor for the human to read/edit at full
+ * size and save through updateDocument; persisting means a closed browser doesn't lose it.
+ * Refuses oversized documents rather than truncating (a truncated rewrite would delete
+ * content).
  */
 export function proposeRevision(
   fileId: string,
   reviewContent: string,
   instructions: string,
-): { revised: string; provider: string; model: string } {
+): { revised: string; provider: string; model: string; baseLastUpdated: number; createdAt: string } {
   const email = requireMember();
   const props = PropertiesService.getScriptProperties();
   const provider = toProvider(props.getProperty(aiProviderProp(email)));
@@ -1406,6 +1409,7 @@ export function proposeRevision(
 
   const file = getManagedFile(fileId);
   const content = file.getBlob().getDataAsString("UTF-8");
+  const baseLastUpdated = file.getLastUpdated().getTime();
   if (content.length > MAX_REVISE_CHARS) {
     throw new Error(
       `ドキュメントが長いため自動反映に未対応です（${MAX_REVISE_CHARS.toLocaleString()}字まで）。分割してお試しください。`,
@@ -1421,11 +1425,74 @@ export function proposeRevision(
     (extra ? `追加指示: ${extra}\n\n` : "") +
     `# レビュー指摘\n\n${review}\n\n# 元のドキュメント\n\n${content}`;
 
+  // The slow provider call runs outside any lock; only the short upsert below locks.
   const revised = stripCodeFence(callProvider(provider, apiKey, model, systemText, userText, 16384)).trim();
   if (!revised) {
     throw new Error("修正案が空でした。モデルやレビュー内容をご確認ください。");
   }
-  return { revised, provider, model };
+  const createdAt = upsertPendingRevision(fileId, email, revised, baseLastUpdated, provider, model);
+  return { revised, provider, model, baseLastUpdated, createdAt };
+}
+
+// Store (or replace) the active user's pending revision draft for a document. At most
+// one row per (document, user); a new proposal overwrites the previous one in place.
+function upsertPendingRevision(
+  documentId: string,
+  email: string,
+  content: string,
+  baseLastUpdated: number,
+  provider: AiProvider,
+  model: string,
+): string {
+  return withLock(() => {
+    const sheet = getSheet(SHEETS.REVISIONS);
+    const createdAt = now();
+    const row = [documentId, email, content, String(baseLastUpdated), provider, model, createdAt];
+    const data = sheetData(sheet);
+    for (let i = 0; i < data.length; i++) {
+      const r = data[i]!;
+      if (r[REVISION_COLS.DOCUMENT_ID] === documentId && r[REVISION_COLS.CREATED_BY] === email) {
+        sheet.getRange(i + 1, 1, 1, row.length).setValues([row]);
+        return createdAt;
+      }
+    }
+    sheet.appendRow(row);
+    return createdAt;
+  });
+}
+
+// The active user's pending revision draft for a document, or null. No lock: a plain read.
+function readPendingRevision(documentId: string, email: string): PendingRevision | null {
+  const data = sheetData(getSheet(SHEETS.REVISIONS));
+  for (let i = data.length - 1; i >= 0; i--) {
+    const r = data[i]!;
+    if (r[REVISION_COLS.DOCUMENT_ID] === documentId && r[REVISION_COLS.CREATED_BY] === email) {
+      return {
+        content: r[REVISION_COLS.CONTENT]!,
+        baseLastUpdated: Number(r[REVISION_COLS.BASE_LAST_UPDATED]) || 0,
+        provider: r[REVISION_COLS.PROVIDER]!,
+        model: r[REVISION_COLS.MODEL]!,
+        createdAt: r[REVISION_COLS.CREATED_AT]!,
+      };
+    }
+  }
+  return null;
+}
+
+/** Discards the active user's pending revision draft for a document (after save or on reject). */
+export function discardPendingRevision(documentId: string): void {
+  withLock(() => {
+    const email = requireMember();
+    const sheet = getSheet(SHEETS.REVISIONS);
+    const data = sheetData(sheet);
+    // Delete bottom-up so row indices stay valid as rows are removed.
+    for (let i = data.length - 1; i >= 0; i--) {
+      const r = data[i]!;
+      if (r[REVISION_COLS.DOCUMENT_ID] === documentId && r[REVISION_COLS.CREATED_BY] === email) {
+        sheet.deleteRow(i + 1);
+      }
+    }
+  });
 }
 
 // Append one review row. Kept tiny and lock-guarded so it doesn't hold the script

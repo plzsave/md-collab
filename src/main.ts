@@ -39,4 +39,5 @@ export {
   listAiModels,
   getReviews,
   proposeRevision,
+  discardPendingRevision,
 } from "./Code";

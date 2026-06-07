@@ -11,6 +11,7 @@ export const SHEETS = {
   STATUSES: "statuses",
   DOC_META: "doc_meta",
   REVIEWS: "reviews",
+  REVISIONS: "revisions",
 } as const;
 
 /** Default workflow statuses, seeded in-memory until the user customizes them. */
@@ -92,5 +93,17 @@ export const REVIEW_COLS = {
   MODEL: 3,
   CONTENT: 4,
   CREATED_BY: 5,
+  CREATED_AT: 6,
+} as const;
+
+// A pending AI-revision draft: at most one row per (document, user). Generating a
+// new proposal overwrites the user's previous draft for that document.
+export const REVISION_COLS = {
+  DOCUMENT_ID: 0,
+  CREATED_BY: 1,
+  CONTENT: 2,
+  BASE_LAST_UPDATED: 3,
+  PROVIDER: 4,
+  MODEL: 5,
   CREATED_AT: 6,
 } as const;

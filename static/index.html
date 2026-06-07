@@ -111,6 +111,17 @@
   /* Fade transition */
   .fade-in { animation: fadeIn 0.15s ease-in; }
   @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+
+  /* Line diff (original vs proposed revision) */
+  .diff-view { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; line-height: 1.55; }
+  .diff-line { display: flex; gap: .5rem; padding: 0 .5rem; white-space: pre-wrap; word-break: break-word; }
+  .diff-sign { flex-shrink: 0; width: 1ch; opacity: .45; user-select: none; }
+  .diff-add { background: rgba(16,185,129,.16); }
+  .diff-del { background: rgba(239,68,68,.16); }
+  .diff-ctx { color: #6b7280; }
+  .dark .diff-ctx { color: #9ca3af; }
+  .dark .diff-add { background: rgba(16,185,129,.22); }
+  .dark .diff-del { background: rgba(239,68,68,.22); }
 </style>
 </head>
 <body class="h-full bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-gray-100">
@@ -205,6 +216,13 @@
             </svg>
           </button>
         </div>
+        <!-- Shown when an unsaved AI-revision draft exists for this doc (survives reloads). -->
+        <div id="view-draft-banner" class="hidden items-center gap-2 px-4 py-2 flex-shrink-0 bg-emerald-50 dark:bg-emerald-900/30 border-b border-emerald-200 dark:border-emerald-800 text-xs text-emerald-800 dark:text-emerald-200">
+          <svg class="w-4 h-4 flex-shrink-0 text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-6.714 2.143L12 21l-2.286-6.857L3 12l6.714-2.143L12 3z"/></svg>
+          <span id="view-draft-label" class="flex-1 truncate">未保存のAI修正案があります。</span>
+          <button id="view-draft-open" class="px-2.5 py-0.5 rounded bg-emerald-600 hover:bg-emerald-700 text-white font-medium flex-shrink-0">開いて確認</button>
+          <button id="view-draft-discard" class="px-2 py-0.5 rounded border border-emerald-300 dark:border-emerald-700 hover:bg-emerald-100 dark:hover:bg-emerald-800/50 font-medium flex-shrink-0">破棄</button>
+        </div>
         <!-- Rendered content -->
         <div id="doc-content" class="flex-1 overflow-y-auto p-6 md-body bg-white dark:bg-gray-900"></div>
       </div>
@@ -222,7 +240,7 @@
     </div>
 
     <!-- Edit mode -->
-    <div id="edit-panel" class="flex-1 flex flex-col overflow-hidden hidden">
+    <div id="edit-panel" class="relative flex-1 flex flex-col overflow-hidden hidden">
       <div class="h-10 border-b border-gray-200 dark:border-gray-700 flex items-center px-4 gap-2 flex-shrink-0 bg-white dark:bg-gray-800">
         <h2 id="edit-title" class="text-sm font-semibold text-gray-800 dark:text-gray-200 flex-1 truncate"></h2>
         <button id="edit-review-toggle" class="text-xs px-3 py-1 rounded-md border border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 font-medium flex items-center gap-1" title="保存されたAIレビューを横に表示">
@@ -232,13 +250,22 @@
         <button id="save-btn" class="text-xs px-3 py-1 rounded-md bg-indigo-600 hover:bg-indigo-700 text-white font-medium transition-colors">保存</button>
         <button id="cancel-edit-btn" class="text-xs px-3 py-1 rounded-md hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-600 dark:text-gray-400 font-medium">キャンセル</button>
       </div>
+      <!-- Shown when the editor holds an AI-revision draft (not yet saved to the doc). -->
+      <div id="edit-draft-banner" class="hidden items-center gap-2 px-4 py-1.5 flex-shrink-0 bg-emerald-50 dark:bg-emerald-900/30 border-b border-emerald-200 dark:border-emerald-800 text-xs text-emerald-800 dark:text-emerald-200">
+        <svg class="w-3.5 h-3.5 flex-shrink-0 text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-6.714 2.143L12 21l-2.286-6.857L3 12l6.714-2.143L12 3z"/></svg>
+        <span id="edit-draft-label" class="flex-1 truncate">AI修正案を表示中です。内容を確認・手直しして「保存」で確定してください。</span>
+        <button id="edit-draft-discard" class="px-2 py-0.5 rounded border border-emerald-300 dark:border-emerald-700 hover:bg-emerald-100 dark:hover:bg-emerald-800/50 font-medium flex-shrink-0">下書きを破棄</button>
+      </div>
       <div class="flex-1 flex overflow-hidden">
         <div class="flex-1 flex flex-col overflow-hidden border-r border-gray-200 dark:border-gray-700">
           <div class="px-3 py-1 text-xs text-gray-500 dark:text-gray-400 bg-gray-50 dark:bg-gray-900 border-b border-gray-200 dark:border-gray-700">Markdown</div>
           <textarea id="editor-pane" class="flex-1 p-4 font-mono text-sm bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 resize-none focus:outline-none leading-relaxed" spellcheck="false"></textarea>
         </div>
         <div class="flex-1 flex flex-col overflow-hidden">
-          <div class="px-3 py-1 text-xs text-gray-500 dark:text-gray-400 bg-gray-50 dark:bg-gray-900 border-b border-gray-200 dark:border-gray-700">プレビュー</div>
+          <div class="px-3 py-1 flex items-center gap-1.5 text-xs bg-gray-50 dark:bg-gray-900 border-b border-gray-200 dark:border-gray-700">
+            <button id="edit-view-preview" class="px-2 py-0.5 rounded font-medium">プレビュー</button>
+            <button id="edit-view-diff" class="px-2 py-0.5 rounded font-medium" title="元の本文との差分（緑=追加 / 赤=削除）">差分</button>
+          </div>
           <div id="preview-pane" class="flex-1 overflow-y-auto p-4 md-body bg-white dark:bg-gray-900"></div>
         </div>
         <!-- Saved AI review, shown beside the editor so it can be referenced while revising -->
@@ -252,6 +279,12 @@
           </div>
           <div id="edit-review-body" class="flex-1 overflow-y-auto p-4 md-body text-sm bg-white dark:bg-gray-900"></div>
         </div>
+      </div>
+      <!-- Blocks the whole editor while a revision is being generated (tens of seconds),
+           so no other action can interfere mid-flight. -->
+      <div id="edit-lock" class="hidden absolute inset-0 z-20 bg-white/80 dark:bg-gray-900/80 backdrop-blur-sm flex-col items-center justify-center gap-3">
+        <svg class="w-7 h-7 text-emerald-500 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+        <p id="edit-lock-msg" class="text-sm text-gray-600 dark:text-gray-300 px-6 text-center"></p>
       </div>
     </div>
   </main>
@@ -442,35 +475,6 @@
   </div>
 </div>
 
-<!-- AI revision proposal (side-by-side: original vs AI-revised) -->
-<div id="revise-modal" class="fixed inset-0 bg-black/40 z-50 hidden items-center justify-center">
-  <div class="bg-white dark:bg-gray-800 rounded-xl shadow-xl w-full max-w-5xl mx-4 fade-in flex flex-col max-h-[90vh]">
-    <div class="p-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between flex-shrink-0">
-      <p class="text-sm font-semibold text-gray-700 dark:text-gray-300 flex items-center gap-1.5">
-        <svg class="w-4 h-4 text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-6.714 2.143L12 21l-2.286-6.857L3 12l6.714-2.143L12 3z"/></svg>
-        AI修正案（左: 元 ／ 右: 修正案・編集可）
-      </p>
-      <button id="revise-close" class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200">✕</button>
-    </div>
-    <div class="flex-1 flex overflow-hidden min-h-0">
-      <div class="flex-1 flex flex-col overflow-hidden border-r border-gray-200 dark:border-gray-700">
-        <div class="px-3 py-1 text-xs text-gray-500 dark:text-gray-400 bg-gray-50 dark:bg-gray-900 border-b border-gray-200 dark:border-gray-700 flex-shrink-0">元のドキュメント</div>
-        <textarea id="revise-original" readonly class="flex-1 p-4 font-mono text-xs bg-gray-50 dark:bg-gray-900 text-gray-700 dark:text-gray-300 resize-none focus:outline-none leading-relaxed"></textarea>
-      </div>
-      <div class="flex-1 flex flex-col overflow-hidden">
-        <div class="px-3 py-1 text-xs text-gray-500 dark:text-gray-400 bg-gray-50 dark:bg-gray-900 border-b border-gray-200 dark:border-gray-700 flex-shrink-0">修正案（保存前に手直しできます）</div>
-        <textarea id="revise-proposed" class="flex-1 p-4 font-mono text-xs bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 resize-none focus:outline-none leading-relaxed" spellcheck="false"></textarea>
-      </div>
-    </div>
-    <div class="p-3 border-t border-gray-200 dark:border-gray-700 flex items-center justify-between gap-2 flex-shrink-0">
-      <span id="revise-status" class="text-xs text-gray-400 truncate"></span>
-      <div class="flex gap-2 flex-shrink-0">
-        <button id="revise-cancel" class="text-sm px-4 py-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-600 dark:text-gray-300">キャンセル</button>
-        <button id="revise-apply" class="text-sm px-4 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-medium disabled:opacity-60 disabled:cursor-not-allowed">適用して保存</button>
-      </div>
-    </div>
-  </div>
-</div>
 
 <!-- Notifications panel -->
 <div id="notif-panel" class="fixed top-12 right-0 w-80 bg-white dark:bg-gray-800 border-l border-b border-gray-200 dark:border-gray-700 shadow-xl z-40 hidden flex-col max-h-[calc(100vh-3rem)]">
@@ -532,6 +536,8 @@ const state = {
   currentDocName: '',
   currentDocContent: '',
   currentDocLastUpdated: 0,
+  pendingRevision: null, // unsaved AI-revision draft for the current doc, or null
+  draftActive: false,    // true while the editor is holding that draft (vs. normal edit)
   threads: [],
   members: [],
   unreadCount: 0,
@@ -1034,6 +1040,8 @@ function openDocument(docId, docName) {
       state.currentDocContent = b.content;
       state.currentDocLastUpdated = b.lastUpdated || 0;
       state.threads = b.threads;
+      state.pendingRevision = b.pendingRevision || null;
+      state.draftActive = false;
       renderDocument(b.content, b.threads);
     })
     .withFailureHandler(onError)
@@ -1054,6 +1062,19 @@ function renderDocument(content, threads) {
   applyCommentAnchors(container, threads);
   renderMermaidBlocks();
   renderThreadList(threads);
+  updateViewDraftBanner();
+}
+
+// Reflect state.pendingRevision in the view-mode resume banner.
+function updateViewDraftBanner() {
+  const banner = document.getElementById('view-draft-banner');
+  const pr = state.pendingRevision;
+  banner.classList.toggle('hidden', !pr);
+  banner.classList.toggle('flex', !!pr);
+  if (pr) {
+    document.getElementById('view-draft-label').textContent =
+      `未保存のAI修正案があります（${pr.model || pr.provider || 'AI'}${pr.createdAt ? ' · ' + new Date(pr.createdAt).toLocaleString('ja-JP', { dateStyle: 'short', timeStyle: 'short' }) : ''}）。`;
+  }
 }
 
 // ─── Markdown rendering ───────────────────────────────────────────────────────
@@ -1702,6 +1723,9 @@ function switchToViewMode() {
   document.getElementById('view-panel').classList.remove('hidden');
   document.getElementById('edit-panel').classList.add('hidden');
   document.getElementById('empty-state').classList.add('hidden');
+  state.draftActive = false;
+  setEditDraftBanner(false);
+  updateViewDraftBanner(); // a still-pending draft stays visible as a resume banner
 }
 
 function switchToEditMode() {
@@ -1711,9 +1735,46 @@ function switchToEditMode() {
   document.getElementById('edit-title').textContent = state.currentDocName;
   const editor = document.getElementById('editor-pane');
   editor.value = state.currentDocContent;
-  updatePreview();
+  state.draftActive = false;
+  setEditDraftBanner(false);
+  setEditLock(false); // clear any stale lock from a prior (navigated-away) generation
+  setEditRightView('preview'); // normal edits default to the rendered preview
   setEditReviewPanel(false); // start each edit session with the panel closed
   editor.focus();
+}
+
+// Open the editor on an AI-revision draft (vs. the saved doc body). The draft is
+// already persisted server-side, so the operator can take their time — close the
+// browser, reopen, and resume — instead of judging it on the spot.
+function enterDraftEdit(draft) {
+  if (!draft) return;
+  switchToEditMode();
+  const editor = document.getElementById('editor-pane');
+  editor.value = draft.content || '';
+  state.draftActive = true;
+  setEditDraftBanner(true, draft);
+  setEditRightView('diff'); // a draft opens on the diff so changes are visible at a glance
+  setEditReviewPanel(true); // show the review beside the proposal for comparison
+  editor.focus();
+}
+
+function setEditDraftBanner(open, draft) {
+  const banner = document.getElementById('edit-draft-banner');
+  banner.classList.toggle('hidden', !open);
+  banner.classList.toggle('flex', !!open);
+  if (open && draft) {
+    document.getElementById('edit-draft-label').textContent =
+      `AI修正案を表示中（${draft.model || draft.provider || 'AI'}）。内容を確認・手直しして「保存」で確定してください。`;
+  }
+}
+
+// Block the editor (with a spinner) while a revision is generated, so no other action
+// fires mid-flight; release it once the proposal arrives or generation fails.
+function setEditLock(open, msg) {
+  const lock = document.getElementById('edit-lock');
+  lock.classList.toggle('hidden', !open);
+  lock.classList.toggle('flex', !!open);
+  if (open) document.getElementById('edit-lock-msg').textContent = msg || '';
 }
 
 document.getElementById('edit-btn').addEventListener('click', switchToEditMode);
@@ -1727,11 +1788,18 @@ document.getElementById('save-btn').addEventListener('click', () => saveDocument
 document.getElementById('editor-pane').addEventListener('input', updatePreview);
 
 let previewTimer = null;
+let editRightView = 'preview'; // 'preview' | 'diff' — what the right column shows
 function updatePreview() {
   clearTimeout(previewTimer);
   previewTimer = setTimeout(() => {
     const content = document.getElementById('editor-pane').value;
     const preview = document.getElementById('preview-pane');
+    if (editRightView === 'diff') {
+      // Diff the editor against the *saved* doc body so the operator sees exactly
+      // what the AI proposal (or their edits) changed before committing.
+      renderDiffInto(preview, state.currentDocContent, content);
+      return;
+    }
     preview.innerHTML = renderMarkdown(content);
     enhanceContent(preview);
     hljs.highlightAll();
@@ -1739,6 +1807,58 @@ function updatePreview() {
     preview.querySelectorAll('.mermaid').forEach(el => delete el.dataset.processed);
     renderMermaidBlocks();
   }, 200);
+}
+
+function setEditRightView(mode) {
+  editRightView = mode;
+  const active = 'px-2 py-0.5 rounded font-medium bg-indigo-100 dark:bg-indigo-900/50 text-indigo-700 dark:text-indigo-300';
+  const inactive = 'px-2 py-0.5 rounded font-medium text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700';
+  document.getElementById('edit-view-preview').className = mode === 'preview' ? active : inactive;
+  document.getElementById('edit-view-diff').className = mode === 'diff' ? active : inactive;
+  updatePreview();
+}
+document.getElementById('edit-view-preview').addEventListener('click', () => setEditRightView('preview'));
+document.getElementById('edit-view-diff').addEventListener('click', () => setEditRightView('diff'));
+
+// Line-level diff via an LCS over lines. Inputs are capped (MAX_REVISE_CHARS) so the
+// O(n*m) table stays small; a guard bails out if a pathological line count blows it up.
+function lineDiff(oldText, newText) {
+  const a = String(oldText || '').split('\n');
+  const b = String(newText || '').split('\n');
+  const n = a.length, m = b.length;
+  if ((n + 1) * (m + 1) > 4000000) return null; // too large to diff cheaply
+  const dp = Array.from({ length: n + 1 }, () => new Int32Array(m + 1));
+  for (let i = n - 1; i >= 0; i--)
+    for (let j = m - 1; j >= 0; j--)
+      dp[i][j] = a[i] === b[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+  const rows = [];
+  let i = 0, j = 0;
+  while (i < n && j < m) {
+    if (a[i] === b[j]) { rows.push({ t: 'ctx', text: a[i] }); i++; j++; }
+    else if (dp[i + 1][j] >= dp[i][j + 1]) { rows.push({ t: 'del', text: a[i] }); i++; }
+    else { rows.push({ t: 'add', text: b[j] }); j++; }
+  }
+  while (i < n) rows.push({ t: 'del', text: a[i++] });
+  while (j < m) rows.push({ t: 'add', text: b[j++] });
+  return rows;
+}
+
+function renderDiffInto(el, oldText, newText) {
+  const rows = lineDiff(oldText, newText);
+  if (!rows) {
+    el.innerHTML = '<div class="text-sm text-gray-400 p-2">差分が大きすぎて表示できません。プレビューでご確認ください。</div>';
+    return;
+  }
+  if (!rows.some(r => r.t !== 'ctx')) {
+    el.innerHTML = '<div class="text-sm text-gray-400 p-2">元の本文との差分はありません。</div>';
+    return;
+  }
+  const html = rows.map(r => {
+    const cls = r.t === 'add' ? 'diff-add' : r.t === 'del' ? 'diff-del' : 'diff-ctx';
+    const sign = r.t === 'add' ? '+' : r.t === 'del' ? '−' : ' ';
+    return `<div class="diff-line ${cls}"><span class="diff-sign">${sign}</span>${escapeHtml(r.text) || ' '}</div>`;
+  }).join('');
+  el.innerHTML = `<div class="diff-view">${html}</div>`;
 }
 
 function saveDocument(force) {
@@ -1749,6 +1869,11 @@ function saveDocument(force) {
       hideLoading();
       state.currentDocContent = content;
       state.currentDocLastUpdated = newLastUpdated || Date.now();
+      // Saving supersedes any pending AI-revision draft for this user+doc.
+      if (state.pendingRevision) {
+        state.pendingRevision = null;
+        google.script.run.withFailureHandler(() => {}).discardPendingRevision(state.currentDocId);
+      }
       showToast('保存しました');
       switchToViewMode();
       renderDocument(content, state.threads);
@@ -2292,66 +2417,61 @@ document.getElementById('ai-review-download').addEventListener('click', () => {
 document.getElementById('ai-review-history').addEventListener('change', e => showReview(Number(e.target.value)));
 
 // ─── AI revision (apply review → human-judged save) ───────────────────────────
-// Generate a revised document from the selected review, show it beside the original
-// for the human to judge/edit, then save through the normal updateDocument path.
+// Generating a revision drops the operator straight into the editor with the proposed
+// body loaded as a *persisted* draft (full height, scrollable). They read/edit it at
+// leisure and save through the normal updateDocument path — no cramped modal, no
+// now-or-never decision, and the draft survives the browser being closed.
 document.getElementById('ai-review-propose').addEventListener('click', () => {
   const r = reviewHistory[Number(document.getElementById('ai-review-history').value || 0)];
   if (!r || !state.currentDocId) return;
-  const btn = document.getElementById('ai-review-propose');
-  btn.disabled = true;
-  btn.textContent = '生成中…';
+  const docId = state.currentDocId; // guard against a doc switch mid-generation
+  hideModal('ai-review-modal');
+  switchToEditMode();
+  setEditReviewPanel(true);
+  setEditLock(true, 'AIが修正案を作成中です…（数十秒かかることがあります）');
   google.script.run
     .withSuccessHandler(res => {
-      btn.disabled = false;
-      btn.textContent = 'AIで修正案を作成';
-      hideModal('ai-review-modal');
-      openReviseModal(res.revised, `${res.model} が生成`);
-    })
-    .withFailureHandler(e => { btn.disabled = false; btn.textContent = 'AIで修正案を作成'; onError(e); })
-    .proposeRevision(state.currentDocId, r.content, '');
-});
-
-function openReviseModal(revised, note) {
-  document.getElementById('revise-original').value = state.currentDocContent || '';
-  document.getElementById('revise-proposed').value = revised || '';
-  document.getElementById('revise-status').textContent = note || '';
-  showModal('revise-modal');
-}
-document.getElementById('revise-close').addEventListener('click', () => hideModal('revise-modal'));
-document.getElementById('revise-cancel').addEventListener('click', () => hideModal('revise-modal'));
-
-document.getElementById('revise-apply').addEventListener('click', () => applyRevision(false));
-function applyRevision(force) {
-  const content = document.getElementById('revise-proposed').value;
-  const btn = document.getElementById('revise-apply');
-  btn.disabled = true;
-  btn.textContent = '保存中…';
-  google.script.run
-    .withSuccessHandler(newLastUpdated => {
-      btn.disabled = false;
-      btn.textContent = '適用して保存';
-      state.currentDocContent = content;
-      state.currentDocLastUpdated = newLastUpdated || Date.now();
-      hideModal('revise-modal');
-      showToast('修正案を保存しました');
-      renderDocument(content, state.threads);
+      if (state.currentDocId !== docId) return; // user navigated away; draft is saved server-side
+      setEditLock(false);
+      const draft = { content: res.revised, provider: res.provider, model: res.model, createdAt: res.createdAt };
+      state.pendingRevision = draft;
+      const editor = document.getElementById('editor-pane');
+      editor.value = res.revised;
+      state.draftActive = true;
+      setEditDraftBanner(true, draft);
+      setEditRightView('diff'); // land on the diff so the change is obvious immediately
     })
     .withFailureHandler(e => {
-      btn.disabled = false;
-      btn.textContent = '適用して保存';
-      const msg = String((e && e.message) || e);
-      if (msg.indexOf('CONFLICT') !== -1) {
-        if (confirm('他のユーザーがこのドキュメントを更新しました。\n\n「OK」: 相手の変更を読み込み直す（この修正案は破棄されます）\n「キャンセル」: この修正案で上書き保存する')) {
-          hideModal('revise-modal');
-          openDocument(state.currentDocId, state.currentDocName);
-        } else {
-          applyRevision(true); // force overwrite
-        }
-      } else {
-        onError(e);
-      }
+      if (state.currentDocId !== docId) { onError(e); return; }
+      setEditLock(false);
+      switchToViewMode();
+      onError(e);
     })
-    .updateDocument(state.currentDocId, content, force ? 0 : (state.currentDocLastUpdated || 0));
+    .proposeRevision(docId, r.content, '');
+});
+
+// Resume a previously-generated draft from the view-mode banner.
+document.getElementById('view-draft-open').addEventListener('click', () => {
+  if (state.pendingRevision) enterDraftEdit(state.pendingRevision);
+});
+document.getElementById('view-draft-discard').addEventListener('click', () => discardDraft());
+document.getElementById('edit-draft-discard').addEventListener('click', () => {
+  // Drop the AI proposal and fall back to the saved doc body in the editor.
+  document.getElementById('editor-pane').value = state.currentDocContent;
+  state.draftActive = false;
+  setEditDraftBanner(false);
+  updatePreview();
+  discardDraft(true); // keep editing; just clear the pending draft server-side
+});
+
+// Discard the persisted draft (server + state). `keepEditing` leaves the editor open.
+function discardDraft(keepEditing) {
+  const docId = state.currentDocId;
+  if (state.pendingRevision && docId) {
+    google.script.run.withFailureHandler(() => {}).discardPendingRevision(docId);
+  }
+  state.pendingRevision = null;
+  if (!keepEditing) updateViewDraftBanner();
 }
 
 function reviewLabel(r) {
@@ -2580,7 +2700,7 @@ function refreshDocListSilently() {
 }
 
 // Close modals on backdrop click
-['comment-modal','reply-modal','new-doc-modal','new-folder-modal','ai-settings-modal','ai-review-modal','revise-modal'].forEach(id => {
+['comment-modal','reply-modal','new-doc-modal','new-folder-modal','ai-settings-modal','ai-review-modal'].forEach(id => {
   document.getElementById(id).addEventListener('click', e => {
     if (e.target === document.getElementById(id)) hideModal(id);
   });

@@ -69,6 +69,20 @@ export interface Notification {
   message: string;
 }
 
+/**
+ * A pending AI-revision draft awaiting human judgement. Persisted (one per
+ * document+user) so a generated proposal survives the browser being closed —
+ * the operator can resume reviewing it later instead of deciding on the spot.
+ */
+export interface PendingRevision {
+  content: string;
+  /** Doc lastUpdated at generation time, so a save can detect intervening edits. */
+  baseLastUpdated: number;
+  provider: string;
+  model: string;
+  createdAt: string;
+}
+
 /** A persisted AI review of a document, kept as full history (newest first). */
 export interface SavedReview {
   id: string;
