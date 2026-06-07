@@ -468,6 +468,43 @@
         </div>
         <p id="ai-model-help" class="text-xs text-gray-400 mt-1"></p>
       </div>
+
+      <!-- Repo-grounded review (GitHub MCP, Claude only) -->
+      <div class="pt-3 border-t border-gray-200 dark:border-gray-700">
+        <p class="text-xs font-semibold text-gray-600 dark:text-gray-400 mb-1 flex items-center gap-1.5">
+          <svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.58 2 12.25c0 4.53 2.87 8.37 6.84 9.73.5.09.68-.22.68-.49l-.01-1.9c-2.78.62-3.37-1.2-3.37-1.2-.46-1.18-1.11-1.49-1.11-1.49-.91-.64.07-.62.07-.62 1 .07 1.53 1.06 1.53 1.06.89 1.56 2.34 1.11 2.91.85.09-.66.35-1.11.63-1.37-2.22-.26-4.56-1.14-4.56-5.07 0-1.12.39-2.03 1.03-2.75-.1-.26-.45-1.3.1-2.71 0 0 .84-.27 2.75 1.05A9.4 9.4 0 0 1 12 6.84c.85 0 1.71.12 2.51.34 1.91-1.32 2.75-1.05 2.75-1.05.55 1.41.2 2.45.1 2.71.64.72 1.03 1.63 1.03 2.75 0 3.94-2.34 4.81-4.57 5.06.36.32.68.94.68 1.9l-.01 2.82c0 .27.18.59.69.49A10.26 10.26 0 0 0 22 12.25C22 6.58 17.52 2 12 2z"/></svg>
+          リポジトリ参照レビュー
+        </p>
+        <label class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">あなたの GitHub PAT</label>
+        <div class="flex gap-2">
+          <input id="gh-pat-input" type="password" autocomplete="off" placeholder="未登録" class="flex-1 border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-2 text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-violet-500">
+          <button id="gh-pat-save" type="button" class="text-xs px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 whitespace-nowrap">保存</button>
+          <button id="gh-pat-clear" type="button" class="text-xs px-3 py-2 rounded-lg text-red-500 hover:bg-red-50 dark:hover:bg-red-900/30 whitespace-nowrap">削除</button>
+        </div>
+        <p id="gh-pat-status" class="text-xs text-gray-400 mt-1"></p>
+
+        <!-- Owner-only: shared fallback PAT + target repo -->
+        <div id="gh-owner-block" class="hidden mt-3 space-y-3">
+          <div>
+            <label class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">共有 PAT（オーナー設定・未登録ユーザーのフォールバック）</label>
+            <div class="flex gap-2">
+              <input id="gh-shared-pat-input" type="password" autocomplete="off" placeholder="未登録" class="flex-1 border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-2 text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-violet-500">
+              <button id="gh-shared-pat-save" type="button" class="text-xs px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 whitespace-nowrap">保存</button>
+              <button id="gh-shared-pat-clear" type="button" class="text-xs px-3 py-2 rounded-lg text-red-500 hover:bg-red-50 dark:hover:bg-red-900/30 whitespace-nowrap">削除</button>
+            </div>
+            <p id="gh-shared-pat-status" class="text-xs text-gray-400 mt-1"></p>
+          </div>
+          <div>
+            <label class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">対象リポジトリ（owner/name）</label>
+            <div class="flex gap-2">
+              <input id="gh-repo-input" type="text" placeholder="例: plzsave/md-collab" class="flex-1 border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-2 text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-violet-500">
+              <button id="gh-repo-save" type="button" class="text-xs px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 whitespace-nowrap">保存</button>
+            </div>
+          </div>
+        </div>
+        <p id="gh-repo-current" class="text-xs text-gray-400 mt-2"></p>
+        <p class="text-xs text-gray-400 mt-1">read-only・対象リポ限定の fine-grained PAT を推奨。PAT は GitHub からの取得にのみ使用（AI には渡りません）。取得したファイル内容は選択中の AI プロバイダにプロンプトとして送られます。</p>
+      </div>
     </div>
     <div class="p-3 border-t border-gray-200 dark:border-gray-700 flex justify-between gap-2">
       <button id="ai-key-clear-btn" class="text-sm px-3 py-1.5 rounded-lg text-red-500 hover:bg-red-50 dark:hover:bg-red-900/30">キーを削除</button>
@@ -491,6 +528,14 @@
     </div>
     <div class="p-4 border-b border-gray-200 dark:border-gray-700 flex-shrink-0 space-y-2">
       <input id="ai-review-instructions" type="text" placeholder="追加の指示（任意・例: API仕様の整合性を重点的に）" class="w-full border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-2 text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-violet-500">
+      <!-- Repo-grounded review (Claude + GitHub MCP). Enabled only when usable. -->
+      <div id="ai-review-repo-row" class="hidden">
+        <label class="flex items-center gap-2 text-xs text-gray-600 dark:text-gray-300 cursor-pointer select-none">
+          <input id="ai-review-repo-toggle" type="checkbox" class="rounded border-gray-300 dark:border-gray-600 text-violet-600 focus:ring-violet-500">
+          <span>リポジトリを参照してレビュー（実コードに照らして判断。少し時間がかかります）</span>
+        </label>
+        <input id="ai-review-repo-input" type="text" placeholder="owner/name（空欄なら設定の既定リポ）" class="hidden mt-2 w-full border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-1.5 text-xs bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-violet-500">
+      </div>
       <select id="ai-review-history" class="hidden w-full border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-1.5 text-xs bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-200 focus:outline-none focus:ring-2 focus:ring-violet-500" title="保存されたレビュー履歴"></select>
     </div>
     <div id="ai-review-body" class="flex-1 overflow-y-auto p-5 md-body bg-white dark:bg-gray-900"></div>
@@ -572,6 +617,8 @@ const state = {
   hasAiKey: false,      // whether the active provider has a key (drives the review-button gate)
   aiProvider: 'claude', // the user's selected provider
   aiProviders: {},      // per-provider { hasKey, model }, loaded from getAiSettings
+  github: { hasUserPat: false, hasSharedPat: false, repo: '', isOwner: false }, // repo-review config
+  githubReady: false,   // a PAT (own or shared) is usable for repo-grounded review
   filterMode: 'open',   // 'open' | 'all'
   pendingAnchor: null,  // { selectedText, contextBefore, contextAfter }
   pendingReplyThreadId: null,
@@ -604,6 +651,9 @@ function onAppState(data) {
   state.statuses = data.statuses || [];
   state.unreadCount = data.unreadCount || 0;
   state.hasAiKey = !!data.hasAiKey;
+  state.aiProvider = data.aiProvider || 'claude';
+  state.githubReady = !!data.githubRepoReady;
+  state.github.repo = data.githubRepo || '';
   hideLoading();
   if (data.isSetupRequired) {
     showSetupScreen(data.isOwner);
@@ -2504,12 +2554,85 @@ function openAiSettings() {
       state.aiProvider = s.provider || 'claude';
       state.aiProviders = s.providers || {};
       state.hasAiKey = !!(state.aiProviders[state.aiProvider] && state.aiProviders[state.aiProvider].hasKey);
+      if (s.github) state.github = s.github;
       document.getElementById('ai-provider-select').value = state.aiProvider;
       applyProviderToForm(state.aiProvider);
+      applyGithubToForm();
     })
     .withFailureHandler(e => { status.textContent = ''; onError(e); })
     .getAiSettings();
 }
+
+// Reflect state.github into the GitHub section (statuses, owner-only block, repo).
+function applyGithubToForm() {
+  const g = state.github || {};
+  document.getElementById('gh-pat-input').value = '';
+  document.getElementById('gh-pat-status').textContent = g.hasUserPat
+    ? '✓ あなたの PAT は登録済み（変更時のみ入力）'
+    : (g.hasSharedPat ? '— 共有 PAT を使用します（個人 PAT 未登録）' : '⚠ PAT が未登録です');
+  document.getElementById('gh-owner-block').classList.toggle('hidden', !g.isOwner);
+  if (g.isOwner) {
+    document.getElementById('gh-shared-pat-input').value = '';
+    document.getElementById('gh-shared-pat-status').textContent = g.hasSharedPat ? '✓ 共有 PAT は登録済み（変更時のみ入力）' : '未登録';
+    document.getElementById('gh-repo-input').value = g.repo || '';
+  }
+  document.getElementById('gh-repo-current').textContent = g.repo
+    ? `既定リポジトリ: ${g.repo}` : '既定リポジトリ: 未設定（レビュー時に指定が必要）';
+}
+
+// Persist state.github from a saver's returned AiSettings and refresh the section.
+function applyGithubSettings(s) {
+  if (s && s.github) state.github = s.github;
+  state.githubReady = !!(state.github.hasUserPat || state.github.hasSharedPat);
+  applyGithubToForm();
+}
+
+// Show/configure the repo-grounded review toggle. Available whenever a PAT is usable
+// (own or shared) — the repo context is fetched via REST and injected, so it works for
+// any provider. state.githubReady comes from getAppState at load and is kept fresh by
+// the settings modal, so no extra round trip on review open.
+function setupRepoReviewRow() {
+  const row = document.getElementById('ai-review-repo-row');
+  const toggle = document.getElementById('ai-review-repo-toggle');
+  const input = document.getElementById('ai-review-repo-input');
+  const usable = state.githubReady;
+  row.classList.toggle('hidden', !usable);
+  toggle.checked = false;
+  input.classList.add('hidden');
+  input.value = '';
+  input.placeholder = state.github.repo ? `owner/name（空欄なら ${state.github.repo}）` : 'owner/name（既定リポ未設定・指定必須）';
+}
+document.getElementById('ai-review-repo-toggle').addEventListener('change', e => {
+  document.getElementById('ai-review-repo-input').classList.toggle('hidden', !e.target.checked);
+});
+
+document.getElementById('gh-pat-save').addEventListener('click', () => {
+  const v = document.getElementById('gh-pat-input').value.trim();
+  if (!v) { showToast('PAT を入力してください'); return; }
+  google.script.run.withSuccessHandler(s => { applyGithubSettings(s); showToast('GitHub PAT を保存しました'); })
+    .withFailureHandler(onError).saveGithubPat('user', v);
+});
+document.getElementById('gh-pat-clear').addEventListener('click', () => {
+  if (!confirm('あなたの GitHub PAT を削除しますか？')) return;
+  google.script.run.withSuccessHandler(s => { applyGithubSettings(s); showToast('PAT を削除しました'); })
+    .withFailureHandler(onError).clearGithubPat('user');
+});
+document.getElementById('gh-shared-pat-save').addEventListener('click', () => {
+  const v = document.getElementById('gh-shared-pat-input').value.trim();
+  if (!v) { showToast('共有 PAT を入力してください'); return; }
+  google.script.run.withSuccessHandler(s => { applyGithubSettings(s); showToast('共有 PAT を保存しました'); })
+    .withFailureHandler(onError).saveGithubPat('shared', v);
+});
+document.getElementById('gh-shared-pat-clear').addEventListener('click', () => {
+  if (!confirm('共有 GitHub PAT を削除しますか？')) return;
+  google.script.run.withSuccessHandler(s => { applyGithubSettings(s); showToast('共有 PAT を削除しました'); })
+    .withFailureHandler(onError).clearGithubPat('shared');
+});
+document.getElementById('gh-repo-save').addEventListener('click', () => {
+  const v = document.getElementById('gh-repo-input').value.trim();
+  google.script.run.withSuccessHandler(s => { applyGithubSettings(s); showToast('対象リポジトリを保存しました'); })
+    .withFailureHandler(onError).saveGithubRepo(v);
+});
 
 document.getElementById('ai-settings-save').addEventListener('click', () => {
   const btn = document.getElementById('ai-settings-save');
@@ -2558,6 +2681,7 @@ document.getElementById('ai-review-btn').addEventListener('click', () => {
   }
   document.getElementById('ai-review-instructions').value = '';
   reviewHistory = [];
+  setupRepoReviewRow();
   showModal('ai-review-modal');
   // Show saved reviews first (don't auto-run — a fresh review costs an API call).
   const body = document.getElementById('ai-review-body');
@@ -2744,28 +2868,34 @@ function runAiReview() {
   const instructions = document.getElementById('ai-review-instructions').value.trim();
   const docId = state.currentDocId;
   if (!docId) return;
+  const useRepo = !document.getElementById('ai-review-repo-row').classList.contains('hidden')
+    && document.getElementById('ai-review-repo-toggle').checked;
+  const repoOverride = document.getElementById('ai-review-repo-input').value.trim();
   rerun.disabled = true;
   rerun.textContent = 'レビュー中…';
   document.getElementById('ai-review-history').classList.add('hidden');
-  body.innerHTML = '<div class="flex items-center justify-center py-10 text-sm text-gray-400">AIがレビュー中です…（数十秒かかることがあります）</div>';
-  google.script.run
-    .withSuccessHandler(res => {
-      rerun.disabled = false;
-      rerun.textContent = 'レビュー実行';
-      // The new review was saved server-side; prepend it so it becomes the newest.
-      reviewHistory.unshift({
-        id: '', documentId: docId, provider: res.provider, model: res.model,
-        content: res.review, createdBy: '', createdByName: res.createdByName || '', createdAt: res.createdAt,
-      });
-      renderReviewHistory();
-    })
-    .withFailureHandler(e => {
-      rerun.disabled = false;
-      rerun.textContent = 'レビュー実行';
-      if (reviewHistory.length) document.getElementById('ai-review-history').classList.remove('hidden');
-      body.innerHTML = `<div class="text-sm text-red-500 px-2 py-4">エラー: ${escapeHtml(String(e.message || e))}</div>`;
-    })
-    .reviewDocument(docId, instructions);
+  body.innerHTML = useRepo
+    ? '<div class="flex items-center justify-center py-10 text-sm text-gray-400 text-center px-4">リポジトリを取得して照合レビュー中です…<br>（ファイル取得のぶん少し時間がかかります）</div>'
+    : '<div class="flex items-center justify-center py-10 text-sm text-gray-400">AIがレビュー中です…（数十秒かかることがあります）</div>';
+  const onSuccess = res => {
+    rerun.disabled = false;
+    rerun.textContent = 'レビュー実行';
+    // The new review was saved server-side; prepend it so it becomes the newest.
+    reviewHistory.unshift({
+      id: '', documentId: docId, provider: res.provider, model: res.model,
+      content: res.review, createdBy: '', createdByName: res.createdByName || '', createdAt: res.createdAt,
+    });
+    renderReviewHistory();
+  };
+  const onFailure = e => {
+    rerun.disabled = false;
+    rerun.textContent = 'レビュー実行';
+    if (reviewHistory.length) document.getElementById('ai-review-history').classList.remove('hidden');
+    body.innerHTML = `<div class="text-sm text-red-500 px-2 py-4">エラー: ${escapeHtml(String(e.message || e))}</div>`;
+  };
+  const runner = google.script.run.withSuccessHandler(onSuccess).withFailureHandler(onFailure);
+  if (useRepo) runner.reviewDocumentRepo(docId, instructions, repoOverride);
+  else runner.reviewDocument(docId, instructions);
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
