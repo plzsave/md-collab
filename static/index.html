@@ -1021,6 +1021,10 @@ document.getElementById('status-save-btn').addEventListener('click', saveStatusS
 function openDocument(docId, docName) {
   state.currentDocId = docId;
   state.currentDocName = docName;
+  // Clear the previous doc's draft state up-front so the early switchToViewMode()
+  // below doesn't flash that doc's resume banner before this doc's bundle loads.
+  state.pendingRevision = null;
+  state.draftActive = false;
   showLoading('読み込み中…');
   switchToViewMode();
   // Update sidebar selection
@@ -1065,6 +1069,14 @@ function renderDocument(content, threads) {
   updateViewDraftBanner();
 }
 
+// A draft is "stale" when the doc was saved (by anyone) after the draft was generated:
+// its baseLastUpdated predates the currently-loaded doc version. Saving it would
+// overwrite those intervening edits without tripping the CONFLICT check, so we warn.
+function draftStale(draft) {
+  return !!(draft && draft.baseLastUpdated && state.currentDocLastUpdated &&
+    draft.baseLastUpdated < state.currentDocLastUpdated);
+}
+
 // Reflect state.pendingRevision in the view-mode resume banner.
 function updateViewDraftBanner() {
   const banner = document.getElementById('view-draft-banner');
@@ -1072,8 +1084,10 @@ function updateViewDraftBanner() {
   banner.classList.toggle('hidden', !pr);
   banner.classList.toggle('flex', !!pr);
   if (pr) {
+    const when = pr.createdAt ? ' · ' + new Date(pr.createdAt).toLocaleString('ja-JP', { dateStyle: 'short', timeStyle: 'short' }) : '';
     document.getElementById('view-draft-label').textContent =
-      `未保存のAI修正案があります（${pr.model || pr.provider || 'AI'}${pr.createdAt ? ' · ' + new Date(pr.createdAt).toLocaleString('ja-JP', { dateStyle: 'short', timeStyle: 'short' }) : ''}）。`;
+      `未保存のAI修正案があります（${pr.model || pr.provider || 'AI'}${when}）。` +
+      (draftStale(pr) ? ' ⚠ 作成後に本文が更新されています。' : '');
   }
 }
 
@@ -1764,7 +1778,8 @@ function setEditDraftBanner(open, draft) {
   banner.classList.toggle('flex', !!open);
   if (open && draft) {
     document.getElementById('edit-draft-label').textContent =
-      `AI修正案を表示中（${draft.model || draft.provider || 'AI'}）。内容を確認・手直しして「保存」で確定してください。`;
+      `AI修正案を表示中（${draft.model || draft.provider || 'AI'}）。内容を確認・手直しして「保存」で確定してください。` +
+      (draftStale(draft) ? ' ⚠ この案の作成後に本文が更新されています（差分は最新本文との比較です）。' : '');
   }
 }
 
@@ -1862,6 +1877,11 @@ function renderDiffInto(el, oldText, newText) {
 }
 
 function saveDocument(force) {
+  // A stale AI draft would slip past the server CONFLICT check (it's measured against
+  // the version we loaded, not the one the draft was built on). Confirm before clobbering.
+  if (!force && state.draftActive && draftStale(state.pendingRevision)) {
+    if (!confirm('この修正案の作成後に、別の保存で本文が更新されています。\n\n最新の本文に上書きして保存しますか？\n（「差分」タブで最新本文との違いを確認できます）')) return;
+  }
   const content = document.getElementById('editor-pane').value;
   showLoading('保存中…');
   google.script.run
@@ -2433,7 +2453,7 @@ document.getElementById('ai-review-propose').addEventListener('click', () => {
     .withSuccessHandler(res => {
       if (state.currentDocId !== docId) return; // user navigated away; draft is saved server-side
       setEditLock(false);
-      const draft = { content: res.revised, provider: res.provider, model: res.model, createdAt: res.createdAt };
+      const draft = { content: res.revised, provider: res.provider, model: res.model, createdAt: res.createdAt, baseLastUpdated: res.baseLastUpdated };
       state.pendingRevision = draft;
       const editor = document.getElementById('editor-pane');
       editor.value = res.revised;
