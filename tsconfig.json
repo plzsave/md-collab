@@ -9,5 +9,6 @@
     "types": ["google-apps-script"],
     "noEmit": true
   },
-  "include": ["src/**/*"]
+  "include": ["src/**/*"],
+  "exclude": ["src/client"]
 }
