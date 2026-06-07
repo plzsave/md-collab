@@ -577,6 +577,64 @@ export function createDocument(folderId: string, title: string): MdDocument {
   });
 }
 
+const MAX_IMPORT_FILES = 20;
+// Generous cap for Markdown (which is text): bounds the single google.script.run
+// payload and keeps each Drive write quick. .md is sent as a plain string (no Base64).
+const MAX_IMPORT_FILE_CHARS = 2_000_000;
+const IMPORT_EXT_RE = /\.(?:md|markdown)$/i;
+
+/**
+ * Imports uploaded Markdown files into a folder as documents. Each file is validated
+ * (extension + size) and written to the folder's Drive directory; a duplicate title is
+ * auto-renamed "name (2)", "name (3)", … so nothing is overwritten. No doc_meta row is
+ * needed (getDocumentList falls back to the first status, same as createDocument).
+ * Returns a per-file result so the client can report partial success.
+ */
+export function importDocuments(
+  folderId: string,
+  files: { name: string; content: string }[],
+): { name: string; ok: boolean; docName?: string; id?: string; error?: string }[] {
+  requireMember();
+  if (!Array.isArray(files) || files.length === 0) throw new Error("ファイルがありません。");
+  if (files.length > MAX_IMPORT_FILES) {
+    throw new Error(`一度に取り込めるのは ${MAX_IMPORT_FILES} ファイルまでです。`);
+  }
+  const driveFolder = DriveApp.getFolderById(getDriveFolderId(folderId));
+
+  return files.map((f) => {
+    const name = String((f && f.name) || "").trim();
+    const content = String((f && f.content) || "");
+    try {
+      if (!IMPORT_EXT_RE.test(name)) throw new Error("拡張子は .md / .markdown のみ対応しています。");
+      if (content.length > MAX_IMPORT_FILE_CHARS) {
+        throw new Error(`ファイルが大きすぎます（${MAX_IMPORT_FILE_CHARS.toLocaleString()}字まで）。`);
+      }
+      const base = name.replace(IMPORT_EXT_RE, "").trim() || "untitled";
+      // Resolve the unique name and create the file under one lock so two concurrent
+      // imports can't both claim the same "name (2)".
+      const created = withLock(() => {
+        const title = uniqueDocTitle(driveFolder, base);
+        const blob = Utilities.newBlob(content, "text/plain", `${title}.md`);
+        return { id: driveFolder.createFile(blob).getId(), title };
+      });
+      return { name, ok: true, docName: created.title, id: created.id };
+    } catch (e) {
+      return { name, ok: false, error: String((e && (e as Error).message) || e) };
+    }
+  });
+}
+
+// Returns `base`, or `base (2)`/`base (3)`/… if `<name>.md` already exists in the folder.
+function uniqueDocTitle(folder: GoogleAppsScript.Drive.Folder, base: string): string {
+  let candidate = base;
+  let n = 2;
+  while (folder.getFilesByName(`${candidate}.md`).hasNext()) {
+    candidate = `${base} (${n})`;
+    n++;
+  }
+  return candidate;
+}
+
 /**
  * Saves `content`. If `expectedLastUpdated` is provided (non-zero) and the file
  * has been modified since then by someone else, the save is rejected with a
