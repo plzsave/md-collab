@@ -38,4 +38,6 @@ export {
   reviewDocument,
   listAiModels,
   getReviews,
+  proposeRevision,
+  discardPendingRevision,
 } from "./Code";
