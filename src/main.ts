@@ -11,6 +11,7 @@ export {
   getDocument,
   getDocumentBundle,
   createDocument,
+  importDocuments,
   updateDocument,
   deleteDocument,
   getStatuses,

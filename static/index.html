@@ -171,6 +171,12 @@
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
           </svg>
         </button>
+        <button id="upload-btn" class="p-1 rounded hover:bg-indigo-50 dark:hover:bg-indigo-900 text-indigo-600 dark:text-indigo-400" title="Markdown を取り込み（.md / .markdown）">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/>
+          </svg>
+        </button>
+        <input id="upload-input" type="file" accept=".md,.markdown,text/markdown" multiple class="hidden">
         <button id="new-doc-btn" class="p-1 rounded hover:bg-indigo-50 dark:hover:bg-indigo-900 text-indigo-600 dark:text-indigo-400" title="新規ドキュメント">
           <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
@@ -179,7 +185,15 @@
       </div>
     </div>
     <div id="status-tabs" class="px-2 py-2 border-b border-gray-200 dark:border-gray-700 flex flex-wrap gap-1"></div>
-    <div class="flex-1 overflow-y-auto" id="doc-list"></div>
+    <div class="relative flex-1 flex flex-col overflow-hidden" id="doc-list-wrap">
+      <div class="flex-1 overflow-y-auto" id="doc-list"></div>
+      <!-- Shown while dragging files over the sidebar (drop to import). -->
+      <div id="upload-dropzone" class="hidden absolute inset-0 z-10 m-2 rounded-lg border-2 border-dashed border-indigo-400 bg-indigo-50/85 dark:bg-indigo-900/50 flex-col items-center justify-center gap-1.5 text-indigo-600 dark:text-indigo-300 pointer-events-none">
+        <svg class="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>
+        <span class="text-xs font-medium">ここにドロップして取り込み</span>
+        <span class="text-[11px] opacity-70">.md / .markdown</span>
+      </div>
+    </div>
   </aside>
 
   <!-- Main content -->
@@ -342,6 +356,20 @@
     <div class="p-3 border-t border-gray-200 dark:border-gray-700 flex justify-end gap-2">
       <button id="new-doc-cancel" class="text-sm px-4 py-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-600 dark:text-gray-300">キャンセル</button>
       <button id="new-doc-submit" class="text-sm px-4 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-medium">作成</button>
+    </div>
+  </div>
+</div>
+
+<!-- Upload result modal -->
+<div id="upload-result-modal" class="fixed inset-0 bg-black/40 z-50 hidden items-center justify-center">
+  <div class="bg-white dark:bg-gray-800 rounded-xl shadow-xl w-full max-w-md mx-4 fade-in flex flex-col max-h-[80vh]">
+    <div class="p-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between flex-shrink-0">
+      <p id="upload-result-title" class="text-sm font-semibold text-gray-700 dark:text-gray-300">取込結果</p>
+      <button id="upload-result-close" class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200">✕</button>
+    </div>
+    <div id="upload-result-body" class="flex-1 overflow-y-auto p-3 space-y-1"></div>
+    <div class="p-3 border-t border-gray-200 dark:border-gray-700 flex justify-end flex-shrink-0">
+      <button id="upload-result-ok" class="text-sm px-4 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-medium">閉じる</button>
     </div>
   </div>
 </div>
@@ -1943,6 +1971,119 @@ function createNewDocument() {
     .createDocument(state.currentFolderId, title);
 }
 
+// ─── Upload (.md import) ──────────────────────────────────────────────────────
+// Markdown is text, so files are read as UTF-8 strings (no Base64) and sent to
+// importDocuments. Large selections are split into payload-bounded batches so a
+// single google.script.run call never carries too much.
+const UPLOAD_MAX_FILES = 20;
+const UPLOAD_MAX_FILE_BYTES = 2 * 1024 * 1024;   // per-file cap (mirrors the server)
+const UPLOAD_BATCH_CHARS = 1500000;              // ~per-call payload budget
+
+document.getElementById('upload-btn').addEventListener('click', () => {
+  if (!state.currentFolderId) { showToast('先にフォルダを選択してください'); return; }
+  document.getElementById('upload-input').value = ''; // allow re-selecting the same file
+  document.getElementById('upload-input').click();
+});
+document.getElementById('upload-input').addEventListener('change', e => {
+  handleUploadFiles(e.target.files);
+});
+
+// Drag & drop onto the sidebar document list.
+(function () {
+  const wrap = document.getElementById('doc-list-wrap');
+  const zone = document.getElementById('upload-dropzone');
+  let depth = 0; // dragenter/leave fire per child; count to know when we've truly left
+  const show = on => { zone.classList.toggle('hidden', !on); zone.classList.toggle('flex', on); };
+  wrap.addEventListener('dragenter', e => { e.preventDefault(); depth++; if (state.currentFolderId) show(true); });
+  wrap.addEventListener('dragover', e => { e.preventDefault(); });
+  wrap.addEventListener('dragleave', e => { e.preventDefault(); if (--depth <= 0) { depth = 0; show(false); } });
+  wrap.addEventListener('drop', e => {
+    e.preventDefault(); depth = 0; show(false);
+    if (!state.currentFolderId) { showToast('先にフォルダを選択してください'); return; }
+    if (e.dataTransfer && e.dataTransfer.files) handleUploadFiles(e.dataTransfer.files);
+  });
+})();
+
+function handleUploadFiles(fileList) {
+  if (!state.currentFolderId) { showToast('先にフォルダを選択してください'); return; }
+  const files = Array.from(fileList || []);
+  if (!files.length) return;
+  if (files.length > UPLOAD_MAX_FILES) { showToast(`一度に取り込めるのは ${UPLOAD_MAX_FILES} ファイルまでです`); return; }
+
+  // Validate client-side first so obviously-bad files don't make the round trip.
+  const accepted = [], rejected = [];
+  files.forEach(f => {
+    if (!/\.(md|markdown)$/i.test(f.name)) rejected.push({ name: f.name, ok: false, error: '拡張子が非対応（.md / .markdown）' });
+    else if (f.size > UPLOAD_MAX_FILE_BYTES) rejected.push({ name: f.name, ok: false, error: 'サイズ上限超過（2MB）' });
+    else accepted.push(f);
+  });
+  if (!accepted.length) { showUploadResult(rejected); return; }
+
+  showLoading('読み込み中…');
+  Promise.all(accepted.map(readFileText))
+    .then(payloads => {
+      // Group into payload-bounded batches (keeps each google.script.run modest).
+      const batches = [];
+      let cur = [], curChars = 0;
+      payloads.forEach(p => {
+        if (cur.length && curChars + p.content.length > UPLOAD_BATCH_CHARS) { batches.push(cur); cur = []; curChars = 0; }
+        cur.push(p); curChars += p.content.length;
+      });
+      if (cur.length) batches.push(cur);
+      sendUploadBatches(batches, 0, [], rejected, payloads.length);
+    })
+    .catch(e => { hideLoading(); onError(e); });
+}
+
+function readFileText(file) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve({ name: file.name, content: String(r.result || '') });
+    r.onerror = () => reject(new Error(file.name + ' の読み込みに失敗しました'));
+    r.readAsText(file); // UTF-8
+  });
+}
+
+function sendUploadBatches(batches, idx, acc, rejected, total) {
+  if (idx >= batches.length) {
+    hideLoading();
+    showUploadResult(acc.concat(rejected));
+    loadDocList(state.currentFolderId);
+    return;
+  }
+  showLoading(`取込中… (${acc.length}/${total})`);
+  google.script.run
+    .withSuccessHandler(results => sendUploadBatches(batches, idx + 1, acc.concat(results || []), rejected, total))
+    .withFailureHandler(e => {
+      hideLoading();
+      showUploadResult(acc.concat(rejected).concat([{ name: '(送信エラー)', ok: false, error: String((e && e.message) || e) }]));
+      loadDocList(state.currentFolderId);
+    })
+    .importDocuments(state.currentFolderId, batches[idx]);
+}
+
+function showUploadResult(results) {
+  const okCount = results.filter(r => r.ok).length;
+  const ngCount = results.length - okCount;
+  document.getElementById('upload-result-title').textContent =
+    `取込結果: 成功 ${okCount} 件${ngCount ? ` / 失敗 ${ngCount} 件` : ''}`;
+  const body = document.getElementById('upload-result-body');
+  body.innerHTML = results.map(r => {
+    const renamed = r.ok && r.docName && r.name.replace(/\.(md|markdown)$/i, '') !== r.docName;
+    const note = r.ok
+      ? (renamed ? ` → <span class="text-gray-500 dark:text-gray-400">${escapeHtml(r.docName)}</span>` : '')
+      : ` <span class="text-red-500">— ${escapeHtml(r.error || 'エラー')}</span>`;
+    const icon = r.ok
+      ? '<span class="text-emerald-500 flex-shrink-0">✓</span>'
+      : '<span class="text-red-500 flex-shrink-0">✗</span>';
+    return `<div class="flex items-start gap-2 text-xs px-1 py-0.5"><span class="mt-0.5">${icon}</span><span class="min-w-0 break-words">${escapeHtml(r.name)}${note}</span></div>`;
+  }).join('');
+  if (okCount) showToast(`${okCount} 件を取り込みました`);
+  showModal('upload-result-modal');
+}
+document.getElementById('upload-result-close').addEventListener('click', () => hideModal('upload-result-modal'));
+document.getElementById('upload-result-ok').addEventListener('click', () => hideModal('upload-result-modal'));
+
 // Delete document
 document.getElementById('delete-doc-btn').addEventListener('click', () => {
   if (!confirm(`"${state.currentDocName}" を削除しますか？`)) return;
@@ -2720,7 +2861,7 @@ function refreshDocListSilently() {
 }
 
 // Close modals on backdrop click
-['comment-modal','reply-modal','new-doc-modal','new-folder-modal','ai-settings-modal','ai-review-modal'].forEach(id => {
+['comment-modal','reply-modal','new-doc-modal','new-folder-modal','ai-settings-modal','ai-review-modal','upload-result-modal'].forEach(id => {
   document.getElementById(id).addEventListener('click', e => {
     if (e.target === document.getElementById(id)) hideModal(id);
   });
