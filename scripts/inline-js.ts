@@ -42,7 +42,12 @@ if (!result.success) {
 
 const js = (await result.outputs[0].text()).trim();
 
-html = html.replace(PLACEHOLDER, `<script>\n${js}\n</script>`);
+// Escape any literal `</script` so it can't terminate the inline <script> early
+// (the `\/` is a no-op in JS string/regex literals, so the code is unchanged).
+const safeJs = js.replace(/<\/(script)/gi, "<\\/$1");
+// Use a function replacer: a string replacement would expand `$$`, `$&`, `` $` ``
+// and `$'` tokens that may occur inside the bundle, silently corrupting it.
+html = html.replace(PLACEHOLDER, () => `<script>\n${safeJs}\n</script>`);
 writeFileSync(htmlPath, html);
 
 console.log(`Inlined client JS (${(js.length / 1024).toFixed(1)} kB) into dist/index.html`);

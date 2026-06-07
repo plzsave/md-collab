@@ -25,7 +25,12 @@ if (!html.includes(PLACEHOLDER)) {
   throw new Error(`Placeholder ${PLACEHOLDER} not found in dist/index.html`);
 }
 
-html = html.replace(PLACEHOLDER, `<style>\n${css}\n</style>`);
+// Escape any literal `</style` so it can't terminate the inline <style> early
+// (the `\/` is a no-op in CSS, so the styles are unchanged).
+const safeCss = css.replace(/<\/(style)/gi, "<\\/$1");
+// Use a function replacer: a string replacement would expand `$$`, `$&`, `` $` ``
+// and `$'` tokens if they ever occur in the compiled CSS.
+html = html.replace(PLACEHOLDER, () => `<style>\n${safeCss}\n</style>`);
 writeFileSync(htmlPath, html);
 unlinkSync(cssPath);
 
