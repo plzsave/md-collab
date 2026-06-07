@@ -1119,11 +1119,30 @@ function aiModelProp(provider: AiProvider, email: string): string {
   return `ai:model:${provider}:${email}`;
 }
 
+// GitHub PAT for repo-grounded review (Claude MCP connector). Per-user by default
+// (gh:pat:<email>); a single owner-set shared token (gh:pat:shared) is the fallback
+// when a user has none — so admin-run and admin-less workspaces use the same mechanism.
+// The target repo (owner/name) is a single workspace setting, overridable per review.
+function githubPatUserProp(email: string): string {
+  return `gh:pat:${email}`;
+}
+const GITHUB_PAT_SHARED_PROP = "gh:pat:shared";
+const GITHUB_REPO_PROP = "gh:repo";
+const GITHUB_REPO_RE = /^[\w.-]+\/[\w.-]+$/;
+
+/** Resolve the PAT to use for `email`: their own first, else the shared one, else "". */
+function resolveGithubPat(email: string): string {
+  const props = PropertiesService.getScriptProperties();
+  return props.getProperty(githubPatUserProp(email)) || props.getProperty(GITHUB_PAT_SHARED_PROP) || "";
+}
+
 interface AiSettings {
   provider: AiProvider;
   // Per-provider key presence + model, so the settings UI can show every provider's
   // state and the user can keep keys registered for more than one at a time.
   providers: { [p in AiProvider]: { hasKey: boolean; model: string } };
+  // GitHub repo-grounded review config. Tokens themselves are never returned.
+  github: { hasUserPat: boolean; hasSharedPat: boolean; repo: string; isOwner: boolean };
 }
 
 /** Returns the active user's AI settings. Never includes any key itself. */
@@ -1140,7 +1159,59 @@ export function getAiSettings(): AiSettings {
   return {
     provider: toProvider(props.getProperty(aiProviderProp(email))),
     providers,
+    github: {
+      hasUserPat: !!props.getProperty(githubPatUserProp(email)),
+      hasSharedPat: !!props.getProperty(GITHUB_PAT_SHARED_PROP),
+      repo: props.getProperty(GITHUB_REPO_PROP) || "",
+      isOwner: isOwner(email),
+    },
   };
+}
+
+/**
+ * Saves a GitHub PAT for repo-grounded review. `scope` is "user" (the caller's own,
+ * namespaced by email) or "shared" (a single workspace token; owner only). An empty
+ * `pat` is rejected — use clearGithubPat to remove. Tokens are never returned to clients.
+ */
+export function saveGithubPat(scope: string, pat: string): AiSettings {
+  const email = requireMember();
+  const token = String(pat || "").trim();
+  if (!token) throw new Error("PAT を入力してください。");
+  const props = PropertiesService.getScriptProperties();
+  if (scope === "shared") {
+    if (!isOwner(email)) throw new Error("共有 PAT を設定できるのはオーナーのみです。");
+    props.setProperty(GITHUB_PAT_SHARED_PROP, token);
+  } else {
+    props.setProperty(githubPatUserProp(email), token);
+  }
+  return getAiSettings();
+}
+
+/** Removes a stored GitHub PAT. `scope` is "user" (own) or "shared" (owner only). */
+export function clearGithubPat(scope: string): AiSettings {
+  const email = requireMember();
+  const props = PropertiesService.getScriptProperties();
+  if (scope === "shared") {
+    if (!isOwner(email)) throw new Error("共有 PAT を削除できるのはオーナーのみです。");
+    props.deleteProperty(GITHUB_PAT_SHARED_PROP);
+  } else {
+    props.deleteProperty(githubPatUserProp(email));
+  }
+  return getAiSettings();
+}
+
+/** Sets the default target repo (owner/name) for repo-grounded review. Owner only; empty clears. */
+export function saveGithubRepo(repo: string): AiSettings {
+  const email = requireMember();
+  if (!isOwner(email)) throw new Error("対象リポジトリを設定できるのはオーナーのみです。");
+  const value = String(repo || "").trim();
+  if (value && !GITHUB_REPO_RE.test(value)) {
+    throw new Error("リポジトリは owner/name の形式で入力してください（例: plzsave/md-collab）。");
+  }
+  const props = PropertiesService.getScriptProperties();
+  if (value) props.setProperty(GITHUB_REPO_PROP, value);
+  else props.deleteProperty(GITHUB_REPO_PROP);
+  return getAiSettings();
 }
 
 /**
@@ -1433,6 +1504,271 @@ export function reviewDocument(
   };
 }
 
+// ── Repo context for grounded review (GitHub REST, not MCP) ──────────────────
+// GAS's 6-minute synchronous limit makes Anthropic's MCP connector (a server-side
+// agentic browse loop in one blocking call) unworkable — it timed out at 360s. So we
+// fetch a bounded slice of the repo ourselves via the GitHub REST API and inject it as
+// prompt context, then do ONE ordinary (non-agentic) provider call. This finishes in
+// seconds, works for any provider, and keeps the PAT between GAS and GitHub only.
+const GITHUB_API = "https://api.github.com";
+const REPO_CONTEXT_CHAR_BUDGET = 120000; // total injected file-body chars
+const REPO_CONTEXT_MAX_FILES = 40; // cap fetched files (bounds round trips/time)
+const REPO_FILE_MAX_BYTES = 100000; // skip individual files larger than this
+const REPO_TEXT_EXT_RE = /\.(ts|tsx|js|jsx|mjs|cjs|json|md|markdown|html?|css|scss|ya?ml|toml|py|go|rs|java|rb|sh|sql|txt|svg)$/i;
+const REPO_SKIP_PATH_RE = /(^|\/)(node_modules|dist|build|out|coverage|vendor|\.git)\//i;
+const REPO_SKIP_FILE_RE = /(package-lock\.json|bun\.lockb|yarn\.lock|pnpm-lock\.yaml)$/i;
+
+function githubGet(path: string, pat: string, raw = false): { code: number; body: string } {
+  const res = UrlFetchApp.fetch(`${GITHUB_API}${path}`, {
+    method: "get",
+    headers: {
+      Authorization: `Bearer ${pat}`,
+      Accept: raw ? "application/vnd.github.raw" : "application/vnd.github+json",
+      "X-GitHub-Api-Version": "2022-11-28",
+      "User-Agent": "md-collab", // GitHub requires a User-Agent
+    },
+    muteHttpExceptions: true,
+  });
+  return { code: res.getResponseCode(), body: res.getContentText() };
+}
+
+interface RepoContext {
+  context: string;
+  branch: string;
+  mode: "all" | "model" | "heuristic"; // how the files were chosen
+  included: { path: string; truncated: boolean }[]; // files whose body was injected
+  totalCandidates: number;
+  budgetHit: boolean;
+}
+
+// Assemble a bounded "repo context": the full file tree (paths) plus the bodies of the
+// chosen text files. Selection is adaptive: if every candidate fits the budget we take
+// them all (small repos); otherwise the model picks the relevant paths from the tree
+// (scales to large repos / monorepos far better than a shallow heuristic). Returns a
+// manifest of exactly what was included so the reviewer can see (and trust) the input.
+function fetchRepoContext(
+  repo: string,
+  pat: string,
+  docContent: string,
+  provider: AiProvider,
+  apiKey: string,
+  model: string,
+): RepoContext {
+  const info = githubGet(`/repos/${repo}`, pat);
+  if (info.code === 401 || info.code === 403) {
+    throw new Error("GitHub 認証に失敗しました。PAT の権限・有効期限・対象リポへのアクセスをご確認ください。");
+  }
+  if (info.code === 404) throw new Error(`リポジトリ ${repo} が見つかりません（PAT のアクセス範囲もご確認ください）。`);
+  if (info.code !== 200) throw new Error(`GitHub API エラー (${info.code})。`);
+  const branch = String(JSON.parse(info.body).default_branch || "main");
+
+  const treeRes = githubGet(`/repos/${repo}/git/trees/${encodeURIComponent(branch)}?recursive=1`, pat);
+  if (treeRes.code !== 200) throw new Error(`リポジトリのツリー取得に失敗しました (${treeRes.code})。`);
+  const blobs: { path: string; size: number }[] = ((JSON.parse(treeRes.body).tree as { type: string; path: string; size?: number }[]) || [])
+    .filter((e) => e.type === "blob")
+    .map((e) => ({ path: e.path, size: Number(e.size) || 0 }));
+
+  const candidates = blobs.filter(
+    (b) => REPO_TEXT_EXT_RE.test(b.path) && !REPO_SKIP_PATH_RE.test(b.path) && !REPO_SKIP_FILE_RE.test(b.path) && b.size <= REPO_FILE_MAX_BYTES,
+  );
+
+  // Choose which files to read.
+  const totalBytes = candidates.reduce((s, c) => s + c.size, 0);
+  let selectedPaths: string[];
+  let mode: RepoContext["mode"];
+  if (candidates.length <= REPO_CONTEXT_MAX_FILES && totalBytes <= REPO_CONTEXT_CHAR_BUDGET) {
+    selectedPaths = candidates.map((c) => c.path); // small repo: take everything
+    mode = "all";
+  } else {
+    selectedPaths = pickFilesWithModel(provider, apiKey, model, docContent, candidates);
+    mode = "model";
+    if (!selectedPaths.length) {
+      // Model selection failed → shallow heuristic (doc-mentioned first, then shortest).
+      const lowerDoc = docContent.toLowerCase();
+      selectedPaths = candidates
+        .slice()
+        .sort((a, b) => {
+          const am = lowerDoc.indexOf(a.path.toLowerCase()) >= 0 ? 0 : 1;
+          const bm = lowerDoc.indexOf(b.path.toLowerCase()) >= 0 ? 0 : 1;
+          return am !== bm ? am - bm : a.path.length - b.path.length;
+        })
+        .map((c) => c.path);
+      mode = "heuristic";
+    }
+  }
+
+  // Fetch bodies for the selected paths, bounded by file count and total chars.
+  const parts: string[] = [];
+  const included: { path: string; truncated: boolean }[] = [];
+  let used = 0;
+  let budgetHit = false;
+  for (const path of selectedPaths) {
+    if (included.length >= REPO_CONTEXT_MAX_FILES || used >= REPO_CONTEXT_CHAR_BUDGET) {
+      budgetHit = true;
+      break;
+    }
+    const encoded = path.split("/").map(encodeURIComponent).join("/");
+    const fileRes = githubGet(`/repos/${repo}/contents/${encoded}?ref=${encodeURIComponent(branch)}`, pat, true);
+    if (fileRes.code !== 200) continue;
+    let text = fileRes.body;
+    let truncated = false;
+    const remaining = REPO_CONTEXT_CHAR_BUDGET - used;
+    if (text.length > remaining) {
+      text = text.substring(0, remaining) + "\n…（省略）";
+      truncated = true;
+      budgetHit = true;
+    }
+    parts.push(`### ${path}\n\`\`\`\n${text}\n\`\`\``);
+    included.push({ path, truncated });
+    used += text.length;
+  }
+
+  let treeListing = blobs.map((b) => b.path).join("\n");
+  if (treeListing.length > 20000) treeListing = treeListing.substring(0, 20000) + "\n…（ファイル一覧省略）";
+  const context =
+    `## ファイル構成（${repo} @ ${branch}）\n\`\`\`\n${treeListing}\n\`\`\`\n\n` +
+    `## 参照ファイルの内容（${included.length} 件）\n\n${parts.join("\n\n")}`;
+
+  return { context, branch, mode, included, totalCandidates: candidates.length, budgetHit };
+}
+
+// Pass 1 of repo-grounded review: show the model the document and the repo's candidate
+// file paths, and let it choose which files are worth reading. Returns only paths that
+// actually exist among the candidates (hallucinated paths are dropped).
+function pickFilesWithModel(
+  provider: AiProvider,
+  apiKey: string,
+  model: string,
+  docContent: string,
+  candidates: { path: string; size: number }[],
+): string[] {
+  const validSet: { [p: string]: boolean } = {};
+  candidates.forEach((c) => (validSet[c.path] = true));
+  let listing = candidates.map((c) => c.path).join("\n");
+  if (listing.length > 50000) listing = listing.substring(0, 50000); // bound the pass-1 prompt
+
+  const systemText =
+    "あなたはコードレビューの下準備をするアシスタントです。与えられた文書（計画・設計）の妥当性を検証するために、" +
+    "リポジトリのどのファイルの中身を読むべきかを選びます。出力は、読むべきファイルのパスだけを JSON 文字列配列で、" +
+    `最大 ${REPO_CONTEXT_MAX_FILES} 件返してください。一覧に存在するパスのみを使い、説明や前置きは一切付けないこと。`;
+  const docForPick = docContent.length > 8000 ? docContent.substring(0, 8000) : docContent;
+  const userText = `# 文書\n${docForPick}\n\n# 候補ファイル一覧\n${listing}`;
+
+  let raw = "";
+  try {
+    raw = callProvider(provider, apiKey, model, systemText, userText, 2048);
+  } catch (e) {
+    return []; // selection failed → caller falls back to the heuristic
+  }
+  return parsePathList(raw, validSet).slice(0, REPO_CONTEXT_MAX_FILES);
+}
+
+// Extract file paths from a model reply (JSON array preferred, else lines/commas),
+// keeping only those present in `validSet` so hallucinated paths are discarded.
+function parsePathList(text: string, validSet: { [p: string]: boolean }): string[] {
+  let tokens: string[] = [];
+  const arrMatch = text.match(/\[[\s\S]*\]/);
+  if (arrMatch) {
+    try {
+      const arr = JSON.parse(arrMatch[0]);
+      if (Array.isArray(arr)) tokens = arr.map((x) => String(x));
+    } catch (e) {
+      /* fall through to line parsing */
+    }
+  }
+  if (!tokens.length) {
+    tokens = text.split(/[\n,]/).map((s) => s.trim().replace(/^[-*]\s*/, "").replace(/^["'`]|["'`]$/g, ""));
+  }
+  const out: string[] = [];
+  const seen: { [p: string]: boolean } = {};
+  for (const t of tokens) {
+    const p = t.trim();
+    if (validSet[p] && !seen[p]) {
+      seen[p] = true;
+      out.push(p);
+    }
+  }
+  return out;
+}
+
+/**
+ * Repo-grounded review: like reviewDocument, but the target GitHub repository's file
+ * tree and key file bodies are fetched (via REST) and injected as context so the model
+ * can judge whether the document's plan/design is feasible and consistent with the
+ * actual code. Works for any provider. The repo defaults to the workspace setting
+ * (gh:repo) and can be overridden per call. Saved to history like a normal review.
+ */
+export function reviewDocumentRepo(
+  fileId: string,
+  instructions: string,
+  repoOverride: string,
+): { review: string; provider: string; model: string; createdAt: string; createdByName: string; repo: string } {
+  const email = requireMember();
+  const props = PropertiesService.getScriptProperties();
+  const provider = toProvider(props.getProperty(aiProviderProp(email)));
+  const apiKey = props.getProperty(aiKeyProp(provider, email));
+  if (!apiKey) throw new Error("APIキーが登録されていません。設定から登録してください。");
+  const pat = resolveGithubPat(email);
+  if (!pat) throw new Error("GitHub PAT が登録されていません。AI設定で個人 PAT か共有 PAT を登録してください。");
+  const repo = String(repoOverride || "").trim() || (props.getProperty(GITHUB_REPO_PROP) || "").trim();
+  if (!repo) throw new Error("対象リポジトリが未設定です。AI設定で owner/name を設定するか、レビュー時に指定してください。");
+  if (!GITHUB_REPO_RE.test(repo)) throw new Error("リポジトリは owner/name の形式で指定してください。");
+  const model = props.getProperty(aiModelProp(provider, email)) || DEFAULT_MODELS[provider];
+
+  const file = getManagedFile(fileId);
+  const name = file.getName().replace(/\.md$/i, "");
+  let content = file.getBlob().getDataAsString("UTF-8");
+  let truncatedNote = "";
+  if (content.length > MAX_REVIEW_CHARS) {
+    content = content.substring(0, MAX_REVIEW_CHARS);
+    truncatedNote = "\n\n（注: ドキュメントが長いため先頭部分のみをレビュー対象にしています）";
+  }
+
+  // Fetched before the (slow) provider call; both run outside any lock. For large repos
+  // this also makes a pass-1 model call to pick files (see fetchRepoContext).
+  const ctx = fetchRepoContext(repo, pat, content, provider, apiKey, model);
+
+  const systemText =
+    "あなたは経験豊富な技術文書レビュアー兼ソフトウェアエンジニアです。与えられた Markdown 文書（多くは計画・設計）を、" +
+    "添付された対象リポジトリのファイル構成と参照ファイルの内容に照らしてレビューしてください。" +
+    "文書の主張・前提・設計が実コードと整合するか、実現可能か、見落とし・齟齬・破綻がないかを検証します。" +
+    "観点: (1) 構成と読みやすさ, (2) 内容の正確さ・実コードとの整合, (3) 説明不足や曖昧な箇所, " +
+    "(4) 誤字脱字や表記ゆれ, (5) 実装・運用上の実現可能性（実コードの構造・依存・制約に照らして）。" +
+    "指摘は該当箇所を引用し、参照した実ファイルのパスを添えてください。" +
+    "添付に本文が含まれないファイルは、ツリーから存在は推測してよいが内容は断定しないこと。" +
+    "出力は Markdown で『要約』『良い点』『改善提案』『リポジトリとの整合』の見出しに分けてください。";
+
+  const extra = String(instructions || "").trim();
+  const userText =
+    (extra ? `レビュー依頼者からの追加指示: ${extra}\n\n` : "") +
+    `# 対象リポジトリ\n${repo}\n\n# レビュー対象ドキュメント名: ${name}\n\n${content}${truncatedNote}\n\n` +
+    `---\n\n# リポジトリ文脈（参考資料）\n\n${ctx.context}`;
+
+  const review = callProvider(provider, apiKey, model, systemText, userText, 8192);
+  if (!review) throw new Error("レビュー結果が空でした。モデルやリポジトリ設定をご確認ください。");
+
+  // Append a transparency footer so it's always visible (and saved) which files the AI
+  // actually saw, how they were chosen, and whether the budget cut anything off.
+  const modeLabel = ctx.mode === "all" ? "全ソース投入" : ctx.mode === "model" ? "モデル選定" : "簡易選定";
+  const fileList = ctx.included.length
+    ? ctx.included.map((f) => `- \`${f.path}\`${f.truncated ? "（一部のみ）" : ""}`).join("\n")
+    : "- （本文取得なし。ファイル一覧のみ参照）";
+  const footer =
+    `\n\n---\n\n#### 参照したリポジトリファイル（${repo} @ ${ctx.branch} ／ ${modeLabel} ／ ${ctx.included.length} 件` +
+    `${ctx.budgetHit ? " ／ 予算到達で打ち切り" : ""}・候補 ${ctx.totalCandidates} 件）\n\n${fileList}`;
+  const fullReview = review + footer;
+
+  const saved = appendReview(fileId, provider, model, fullReview, email);
+  return {
+    review: fullReview,
+    provider,
+    model,
+    createdAt: saved.createdAt,
+    createdByName: getMemberDisplayName(email, getMembers()),
+    repo,
+  };
+}
+
 // LLMs sometimes wrap the whole answer in a ```markdown fence or ``` fence despite
 // being told not to. Strip a single fence that encloses the entire output.
 function stripCodeFence(text: string): string {
@@ -1608,10 +1944,14 @@ export function getAppState(): AppState {
       statuses: [],
       unreadCount: 0,
       hasAiKey: false,
+      aiProvider: DEFAULT_AI_PROVIDER,
+      githubRepoReady: false,
+      githubRepo: "",
     };
   }
   const members = getMembers();
   const member = isAuthorized(user, members);
+  const props = PropertiesService.getScriptProperties();
   // Non-members get an empty workspace view; the UI shows an access notice.
   const folders = member ? getFolders() : [];
   const statuses = member ? getStatuses() : [];
@@ -1631,6 +1971,9 @@ export function getAppState(): AppState {
     statuses,
     unreadCount,
     hasAiKey: member ? hasActiveAiKey(user) : false,
+    aiProvider: member ? toProvider(props.getProperty(aiProviderProp(user))) : DEFAULT_AI_PROVIDER,
+    githubRepoReady: member ? resolveGithubPat(user) !== "" : false,
+    githubRepo: member ? props.getProperty(GITHUB_REPO_PROP) || "" : "",
   };
 }
 

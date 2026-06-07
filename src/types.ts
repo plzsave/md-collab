@@ -108,4 +108,10 @@ export interface AppState {
   unreadCount: number;
   /** Whether the current user has registered an API key for their selected AI review provider. */
   hasAiKey: boolean;
+  /** The current user's selected AI provider (gates the Claude-only repo-grounded review). */
+  aiProvider: string;
+  /** Whether a GitHub PAT is usable for this user (own or shared fallback). */
+  githubRepoReady: boolean;
+  /** The configured default repo (owner/name) for repo-grounded review, or "". */
+  githubRepo: string;
 }
