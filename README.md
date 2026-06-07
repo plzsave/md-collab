@@ -33,7 +33,7 @@ Google Apps Script（GAS）上で動く、Markdown ドキュメントの共同�
 ## アーキテクチャ概要
 
 ```
-ブラウザ (static/index.html のインラインJS)
+ブラウザ (src/client/main.ts → index.html にインライン)
    │  google.script.run
    ▼
 GAS サーバ (src/Code.ts)
@@ -46,7 +46,7 @@ GAS サーバ (src/Code.ts)
 ```
 
 - サーバの公開 API は `src/Code.ts` で実装し、`src/main.ts` から re-export（GAS のエントリ）。
-- フロントエンドは `static/index.html` 内のインラインスクリプト。
+- フロントエンドは `src/client/main.ts`（ビルド時に `static/index.html` の `<!--CLIENT_JS-->` へインライン）。
 - 速度対策として、小さく変更頻度の低いデータ（members / statuses / doc_meta）は `CacheService` に、DB スプレッドシート ID 等は `PropertiesService` にキャッシュしています（書き込み時に無効化）。
 
 ### データモデル
@@ -99,6 +99,7 @@ GAS サーバ (src/Code.ts)
 1. `vite build` … `src/main.ts` を `dist/Code.js` にバンドル
 2. `tailwindcss` … `src/tailwind.css` を `dist/.tw.css` にコンパイル
 3. `scripts/inline-css.ts` … `static/index.html` の `<!--TAILWIND_CSS-->` を `<style>` として差し込み、`dist/index.html` を生成（`.tw.css` は削除）
+4. `scripts/inline-js.ts` … `src/client/main.ts` を IIFE バンドルし、`dist/index.html` の `<!--CLIENT_JS-->` を `<script>` として差し込み
 
 `dist/` は成果物なので git 管理外です。clasp は `dist/` の中身だけを Apps Script に push します（`.clasp.json` の `rootDir`、および `.claspignore` で制御）。
 
@@ -164,12 +165,16 @@ bun run clasp:open # Apps Script エディタを開く
 │   ├── main.ts          # GAS エントリ（Code.ts の re-export）
 │   ├── config.ts        # シート名・列定義・デフォルト値
 │   ├── types.ts         # 共有型
-│   └── tailwind.css     # Tailwind v4 エントリ
+│   ├── tailwind.css     # Tailwind v4 エントリ
+│   └── client/          # フロントエンド（ブラウザ）コード
+│       ├── main.ts      # クライアント実装（ビルド時に index.html へインライン）
+│       └── tsconfig.json # クライアント用 TS 設定（DOM lib）
 ├── static/
-│   ├── index.html       # フロントエンド（インラインJS／Tailwind 差し込み先）
+│   ├── index.html       # フロントエンドの外枠（Tailwind／クライアントJS 差し込み先）
 │   └── appsscript.json  # GAS マニフェスト（スコープ・Web アプリ設定）
 ├── scripts/
-│   └── inline-css.ts    # ビルド後処理（CSS インライン）
+│   ├── inline-css.ts    # ビルド後処理（CSS インライン）
+│   └── inline-js.ts     # ビルド後処理（クライアントJS インライン）
 ├── dist/                # ビルド成果物（git 管理外・clasp の push 対象）
 ├── .clasp.json.example  # clasp 設定テンプレート
 └── vite.config.ts

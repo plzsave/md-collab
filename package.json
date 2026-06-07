@@ -3,7 +3,7 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "build": "vite build && bun run build:css && bun run scripts/inline-css.ts",
+    "build": "vite build && bun run build:css && bun run scripts/inline-css.ts && bun run scripts/inline-js.ts",
     "build:css": "tailwindcss -i src/tailwind.css -o dist/.tw.css --minify",
     "dev": "vite build --watch",
     "push": "bun run build && bun run clasp:push",

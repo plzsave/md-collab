@@ -1,14 +1,12 @@
 {
   "compilerOptions": {
-    "target": "ES2019",
-    "lib": ["ES2019"],
+    "target": "ESNext",
     "module": "ESNext",
     "moduleResolution": "bundler",
     "strict": true,
     "skipLibCheck": true,
-    "types": ["google-apps-script"],
+    "types": ["bun"],
     "noEmit": true
   },
-  "include": ["src/**/*"],
-  "exclude": ["src/client"]
+  "include": ["**/*"]
 }
