@@ -1519,16 +1519,21 @@ const REPO_SKIP_PATH_RE = /(^|\/)(node_modules|dist|build|out|coverage|vendor|\.
 const REPO_SKIP_FILE_RE = /(package-lock\.json|bun\.lockb|yarn\.lock|pnpm-lock\.yaml)$/i;
 
 function githubGet(path: string, pat: string, raw = false): { code: number; body: string } {
-  const res = UrlFetchApp.fetch(`${GITHUB_API}${path}`, {
-    method: "get",
-    headers: {
-      Authorization: `Bearer ${pat}`,
-      Accept: raw ? "application/vnd.github.raw" : "application/vnd.github+json",
-      "X-GitHub-Api-Version": "2022-11-28",
-      "User-Agent": "md-collab", // GitHub requires a User-Agent
-    },
-    muteHttpExceptions: true,
-  });
+  let res: GoogleAppsScript.URL_Fetch.HTTPResponse;
+  try {
+    res = UrlFetchApp.fetch(`${GITHUB_API}${path}`, {
+      method: "get",
+      headers: {
+        Authorization: `Bearer ${pat}`,
+        Accept: raw ? "application/vnd.github.raw" : "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+        "User-Agent": "md-collab", // GitHub requires a User-Agent
+      },
+      muteHttpExceptions: true,
+    });
+  } catch (e) {
+    throw new Error("GitHub への接続に失敗しました。時間をおいて再度お試しください。");
+  }
   return { code: res.getResponseCode(), body: res.getContentText() };
 }
 
